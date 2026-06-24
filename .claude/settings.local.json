@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\" -Depth 2 | Where-Object { $_.FullName -notmatch '\\\\.venv' } | Select-Object FullName, PSIsContainer | Sort-Object FullName)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\" -Recurse -File | Where-Object { $_.Extension -notin @\\('.xlsx', '.jsonl', '.log', '.png', '.jpg', '.pdf'\\) } | Select-Object FullName, Length | Sort-Object FullName | Format-Table -AutoSize)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\" -File | Select-Object Name, Length; Get-ChildItem -Path \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\" -Directory | Where-Object { $_.Name -ne '.venv' } | Select-Object Name)",
+      "PowerShell(Get-Process -Name python -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\\\\data\" -File | Select-Object Name, @{l='Size';e={\"{0:N0}\" -f $_.Length}} | ForEach-Object { \"$\\($_.Name\\) \\($\\($_.Size\\) bytes\\)\" })",
+      "PowerShell(python -c \"import pptx; print\\(pptx.__version__\\)\")",
+      "PowerShell(pip install python-pptx -q)",
+      "PowerShell(python -c \"import pptx; print\\('OK:', pptx.__version__\\)\")",
+      "PowerShell($f = \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\\\\Regulatory_Framework_Mapper_Architecture.pptx\"; [math]::Round\\(\\(Get-Item $f\\).Length / 1KB, 1\\))",
+      "PowerShell(python --version)",
+      "PowerShell(python -c \"from pptx import Presentation; prs = Presentation\\('Regulatory_Framework_Mapper_Architecture.pptx'\\); print\\('Slides:', len\\(prs.slides\\)\\); print\\('OK'\\)\" 2>&1)",
+      "PowerShell(Unblock-File -Path \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\\\\Regulatory_Framework_Mapper_Architecture.pptx\")",
+      "PowerShell(Clear-Content \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\\\\docs\\\\cache\\\\mapping_decisions_cache.jsonl\" -ErrorAction SilentlyContinue; $count = \\(Get-Content \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\\\\docs\\\\cache\\\\mapping_decisions_cache.jsonl\" -ErrorAction SilentlyContinue | Measure-Object -Line\\).Lines; \"Cache vidé — $count lignes restantes\")",
+      "PowerShell(\"Cache parent gap synthesis vid�\")",
+      "PowerShell(cd \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\"; $env:PYTHONIOENCODING=\"utf-8\"; python \"c:\\\\Users\\\\000023026\\\\AppData\\\\Local\\\\Temp\\\\audit_mapping.py\" 2>&1 | Out-String -Width 200)",
+      "PowerShell($path = \"C:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\\\\Regulatory_Framework_Mapper_Architecture.pptx\"; Unblock-File $path; $ppt = New-Object -ComObject PowerPoint.Application; $ppt.Visible = $true; $pres = $ppt.Presentations.Open\\($path\\); \"Slides: $\\($pres.Slides.Count\\)\"; $pres.Close\\(\\); $ppt.Quit\\(\\))",
+      "PowerShell(cd \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\"; $env:PYTHONIOENCODING=\"utf-8\"; python \"c:\\\\Users\\\\000023026\\\\AppData\\\\Local\\\\Temp\\\\investigate_cases.py\" 2>&1 | Out-String -Width 220)",
+      "PowerShell(cd \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\"; $env:PYTHONIOENCODING=\"utf-8\"; python \"c:\\\\Users\\\\000023026\\\\AppData\\\\Local\\\\Temp\\\\purge_cache_entry.py\" 2>&1)",
+      "PowerShell(cd \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\"; $env:PYTHONIOENCODING=\"utf-8\"; python \"c:\\\\Users\\\\000023026\\\\AppData\\\\Local\\\\Temp\\\\full_audit.py\" 2>&1 | Out-String -Width 230)",
+      "Bash(.venv\\\\Scripts\\\\python.exe -c \"from src.consolidated_framework import run_consolidated_framework, ConsolidatedRequirement; from src.consolidated_output_writer import write_consolidated_workbook; from src.config import load_config; print\\('imports OK'\\)\")"
+    ]
+  }
+}

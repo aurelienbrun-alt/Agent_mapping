@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.env.local
+.venv/
+logs/*.jsonl
+logs/*.log
+reports/*.md
+output/*.xlsx
+docs/cache/*
+!docs/cache/.gitkeep
