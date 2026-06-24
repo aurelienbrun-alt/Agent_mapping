@@ -23,6 +23,7 @@ def _relaunch_in_venv() -> None:
 _relaunch_in_venv()
 
 import argparse
+import re
 from datetime import datetime
 from time import perf_counter
 
@@ -32,7 +33,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from src.config import load_config
+from src.config import load_config, validate_config
 from src.final_judge import run_final_judge
 from src.guideline_rag import GuidelineIndex
 from src.azure_openai_client import AzureOpenAIClient
@@ -65,8 +66,14 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_config(args.env)
+    # Validate configuration early. Blocking inconsistencies raise here, before any
+    # logger/cache/LLM work. Non-blocking warnings are collected and logged below.
+    config_warnings = validate_config(cfg)
     run_id = f"run_{safe_filename(cfg.framework_a.name)}_{safe_filename(cfg.framework_b.name)}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     logger = JsonlRunLogger(cfg.log_dir, run_id)
+    for w in config_warnings:
+        print(f"[CONFIG WARNING] {w}", flush=True)
+        logger.event("config.warning", message=w)
     logger.event("run.start", framework_a=cfg.framework_a.name, framework_b=cfg.framework_b.name)
 
     try:
@@ -193,8 +200,19 @@ def main() -> None:
                 print(f"Consolidated framework: {cons_path}", flush=True)
             _done("Generating consolidated framework", t)
 
+        criticality_map: dict[str, dict[str, bool]] = {}
+        if cfg.enable_entity_criticality:
+            for atom in list(atoms_a) + list(atoms_b):
+                pid = re.sub(r"__row_\d+$", "", str(getattr(atom, "parent_id", "") or ""))
+                if pid and pid not in criticality_map:
+                    criticality_map[pid] = {
+                        "essential": bool(getattr(atom, "essential", True)),
+                        "important": bool(getattr(atom, "important", False)),
+                    }
+            logger.event("entity_criticality.map", entries=len(criticality_map))
+
         t = _stage("[5/6] Writing Excel workbook")
-        output_path = write_mapping_workbook(cfg, a_to_b, b_to_a, run_id)
+        output_path = write_mapping_workbook(cfg, a_to_b, b_to_a, run_id, criticality=criticality_map, llm=llm, logger=logger)
         _done("Writing Excel workbook", t)
         logger.event("output.write", output=str(output_path))
         t = _stage("[6/6] Writing log analysis report")

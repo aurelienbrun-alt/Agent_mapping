@@ -1159,9 +1159,15 @@ def _equivalence_from_coverage(coverage: int, relation_type: str = "") -> str:
 def cosine(a: list[float], b: list[float]) -> float:
     if not a or not b:
         return 0.0
-    n = min(len(a), len(b))
-    va = np.array(a[:n], dtype=float)
-    vb = np.array(b[:n], dtype=float)
+    if len(a) != len(b):
+        # Indique un melange de caches d'embeddings de dimensions differentes.
+        raise ValueError(
+            f"Embedding dimension mismatch: {len(a)} vs {len(b)}. "
+            "Probable melange de caches. Reconstruire avec REBUILD_CACHE=true "
+            "ou aligner AZURE_OPENAI_EMBEDDING_DIMENSIONS."
+        )
+    va = np.asarray(a, dtype=float)
+    vb = np.asarray(b, dtype=float)
     denom = float(np.linalg.norm(va) * np.linalg.norm(vb))
     if denom == 0:
         return 0.0

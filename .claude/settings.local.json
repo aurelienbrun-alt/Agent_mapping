@@ -20,7 +20,10 @@
       "PowerShell(cd \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\"; $env:PYTHONIOENCODING=\"utf-8\"; python \"c:\\\\Users\\\\000023026\\\\AppData\\\\Local\\\\Temp\\\\investigate_cases.py\" 2>&1 | Out-String -Width 220)",
       "PowerShell(cd \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\"; $env:PYTHONIOENCODING=\"utf-8\"; python \"c:\\\\Users\\\\000023026\\\\AppData\\\\Local\\\\Temp\\\\purge_cache_entry.py\" 2>&1)",
       "PowerShell(cd \"c:\\\\Users\\\\000023026\\\\OneDrive - Wavestone\\\\Desktop\\\\mapper\"; $env:PYTHONIOENCODING=\"utf-8\"; python \"c:\\\\Users\\\\000023026\\\\AppData\\\\Local\\\\Temp\\\\full_audit.py\" 2>&1 | Out-String -Width 230)",
-      "Bash(.venv\\\\Scripts\\\\python.exe -c \"from src.consolidated_framework import run_consolidated_framework, ConsolidatedRequirement; from src.consolidated_output_writer import write_consolidated_workbook; from src.config import load_config; print\\('imports OK'\\)\")"
+      "Bash(.venv\\\\Scripts\\\\python.exe -c \"from src.consolidated_framework import run_consolidated_framework, ConsolidatedRequirement; from src.consolidated_output_writer import write_consolidated_workbook; from src.config import load_config; print\\('imports OK'\\)\")",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c ' *)"
     ]
   }
 }

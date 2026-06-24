@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from collections import defaultdict
 from tqdm import tqdm
 
@@ -66,6 +65,32 @@ def _apply_correction(source_id: str, corr: dict, decisions: list[MappingDecisio
     sanitize_decision(target, app_cfg)
 
 
+def _judge_payload(d: MappingDecision) -> dict:
+    """Payload minimal pour le final judge.
+
+    On retire `candidates` (qui contient tous les champs + scores de chaque
+    candidat) car il fait exploser la taille du prompt sans aider le juge a
+    corriger les faux positifs/negatifs. Le juge raisonne sur la decision, pas
+    sur la re-notation de chaque candidat.
+    """
+    return {
+        "source_id": d.source_id,
+        "source_requirement": d.source_requirement,
+        "source_category": d.source_category,
+        "target_ids": d.target_ids,
+        "target_requirements": d.target_requirements,
+        "relation_type": d.relation_type,
+        "equivalence_level": d.equivalence_level,
+        "coverage_level": d.coverage_level,
+        "match_type": d.match_type,
+        "gap_type": d.gap_type,
+        "gap": d.gap,
+        "gap_items": d.gap_items,
+        "confidence": d.confidence,
+        "mapping_risk": d.mapping_risk,
+    }
+
+
 def run_final_judge(decisions: list[MappingDecision], app_cfg: AppConfig, llm: AzureOpenAIClient, logger: JsonlRunLogger) -> list[MappingDecision]:
     if not app_cfg.run_final_llm_judge or app_cfg.dry_run_without_llm:
         logger.event("final_judge.skip", reason="disabled_or_dry_run")
@@ -90,7 +115,7 @@ def run_final_judge(decisions: list[MappingDecision], app_cfg: AppConfig, llm: A
     if review_batches:
         print(f"[3/6] Final judge: reviewing {total_to_review} decision(s) in {len(review_batches)} batch(es)...")
     for category, batch_no, batch in tqdm(review_batches, desc="Final judge", unit="batch"):
-        payload = [asdict(d) for d in batch]
+        payload = [_judge_payload(d) for d in batch]
         prompt = render_prompt(
             app_cfg.prompt_final_judge,
             category=category,

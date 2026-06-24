@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict
 from typing import Any
 
@@ -230,7 +231,6 @@ def heuristic_atomize(text: str) -> list[str]:
         for part in parts:
             if sep in part.lower() and len(part) > 120:
                 # case-insensitive split while preserving content approximately.
-                import re
                 new_parts.extend([p.strip(" .") for p in re.split(re.escape(sep), part, flags=re.IGNORECASE) if p.strip(" .")])
             else:
                 new_parts.append(part)
@@ -271,6 +271,8 @@ def _to_atom(row: RequirementRow, atom_index: int, text: str, rationale: str) ->
         original_category=row.original_category or row.category,
         category_harmonization_reason=row.category_harmonization_reason,
         category_harmonization_confidence=row.category_harmonization_confidence,
+        essential=row.essential,
+        important=row.important,
     )
 
 
