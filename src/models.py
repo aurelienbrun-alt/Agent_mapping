@@ -17,6 +17,10 @@ class RequirementRow:
     original_category: str = ""
     category_harmonization_reason: str = ""
     category_harmonization_confidence: float = 0.0
+    # Entity criticality (NIS2): essential is always True in the source data;
+    # important indicates whether the requirement also applies to important entities.
+    essential: bool = True
+    important: bool = False
 
 
 @dataclass
@@ -46,6 +50,9 @@ class AtomicRequirement:
     category_reason: str = ""
     category_method: str = ""
     category_scores: dict[str, Any] = field(default_factory=dict)
+    # Entity criticality (NIS2), inherited from the parent RequirementRow.
+    essential: bool = True
+    important: bool = False
 
 
 @dataclass

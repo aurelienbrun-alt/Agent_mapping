@@ -18,6 +18,8 @@ class FrameworkConfig:
     requirement_column: str
     category_column: str
     subcategory_column: str = ""
+    essential_column: str = ""
+    important_column: str = ""
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,9 @@ class AppConfig:
 
     framework_a: FrameworkConfig
     framework_b: FrameworkConfig
+
+    # Entity criticality (NIS2 essential/important entities)
+    enable_entity_criticality: bool
 
     # Category harmonization
     enable_category_harmonization: bool
@@ -175,6 +180,14 @@ class AppConfig:
     prompt_consolidated_batch: str
     prompt_consolidated_supplement: str
 
+    # Action plan synthesis (final output column)
+    enable_action_plan: bool
+    action_plan_batch_size: int
+    action_plan_max_bullets: int
+    enable_action_plan_cache: bool
+    action_plan_cache_file: str
+    prompt_action_plan: str
+
 
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default)
@@ -199,6 +212,8 @@ def load_config(env_path: str | Path = ".env") -> AppConfig:
         requirement_column=_env("A_REQUIREMENT_COLUMN", "Requirement"),
         category_column=_env("A_CATEGORY_COLUMN", "Category"),
         subcategory_column="",  # intentionally disabled: the enterprise version maps by ENISA category only
+        essential_column=_env("A_ESSENTIAL_COLUMN", "Essential"),
+        important_column=_env("A_IMPORTANT_COLUMN", "Important"),
     )
     framework_b = FrameworkConfig(
         name=_env("FRAMEWORK_B_NAME", "FrameworkB"),
@@ -209,6 +224,8 @@ def load_config(env_path: str | Path = ".env") -> AppConfig:
         requirement_column=_env("B_REQUIREMENT_COLUMN", "Requirement"),
         category_column=_env("B_CATEGORY_COLUMN", "Category"),
         subcategory_column="",
+        essential_column=_env("B_ESSENTIAL_COLUMN", "Essential"),
+        important_column=_env("B_IMPORTANT_COLUMN", "Important"),
     )
 
     return AppConfig(
@@ -225,6 +242,7 @@ def load_config(env_path: str | Path = ".env") -> AppConfig:
         dry_run_without_llm=as_bool(_env("DRY_RUN_WITHOUT_LLM", "false"), False),
         framework_a=framework_a,
         framework_b=framework_b,
+        enable_entity_criticality=as_bool(_env("ENABLE_ENTITY_CRITICALITY"), False),
         enable_category_harmonization=as_bool(_env("ENABLE_CATEGORY_HARMONIZATION"), True),
         enisa_category_file=_path(root, _env("ENISA_CATEGORY_FILE", "data/enisa_categories.xlsx")),
         enisa_category_sheet=_env("ENISA_CATEGORY_SHEET", "Catégories ENISA").strip() or None,
@@ -347,4 +365,60 @@ def load_config(env_path: str | Path = ".env") -> AppConfig:
         consolidated_orphan_threshold=as_int(_env("CONSOLIDATED_ORPHAN_THRESHOLD"), 40),
         prompt_consolidated_batch=decode_env_prompt(_env("PROMPT_CONSOLIDATED_BATCH", "")),
         prompt_consolidated_supplement=decode_env_prompt(_env("PROMPT_CONSOLIDATED_SUPPLEMENT", "")),
+        enable_action_plan=as_bool(_env("ENABLE_ACTION_PLAN"), False),
+        action_plan_batch_size=as_int(_env("ACTION_PLAN_BATCH_SIZE"), 20),
+        action_plan_max_bullets=as_int(_env("ACTION_PLAN_MAX_BULLETS"), 4),
+        enable_action_plan_cache=as_bool(_env("ENABLE_ACTION_PLAN_CACHE"), True),
+        action_plan_cache_file=_env("ACTION_PLAN_CACHE_FILE", "action_plan_cache.jsonl"),
+        prompt_action_plan=decode_env_prompt(_env("PROMPT_ACTION_PLAN", "")),
     )
+
+
+def validate_config(cfg: AppConfig) -> list[str]:
+    """Valide la coherence de la configuration.
+
+    Leve ValueError pour les incoherences bloquantes (a appeler tot, avant tout
+    traitement). Retourne une liste de warnings non bloquants (a logger/afficher).
+    """
+    warnings: list[str] = []
+
+    supported_scopes = {"same_enisa_category", "same_category", "soft_enisa", "soft_enisa_category", "all"}
+    if cfg.match_scope not in supported_scopes:
+        raise ValueError(
+            f"MATCH_SCOPE invalide: {cfg.match_scope!r}. Valeurs acceptees: {sorted(supported_scopes)}"
+        )
+
+    if cfg.invalid_target_id_policy not in {"raise", "drop", "sanitize", "convert_to_gap"}:
+        raise ValueError(
+            f"INVALID_TARGET_ID_POLICY invalide: {cfg.invalid_target_id_policy!r}. "
+            "Valeurs acceptees: raise, drop, sanitize, convert_to_gap."
+        )
+
+    weight_sum = (
+        cfg.weight_semantic + cfg.weight_keyword + cfg.weight_structured
+        + cfg.weight_action_object + cfg.weight_control_type
+    )
+    if weight_sum <= 0:
+        raise ValueError("Tous les poids de matching sont a 0 — aucun score ne peut etre calcule.")
+
+    if not cfg.dry_run_without_llm and not cfg.azure_openai_api_key:
+        raise ValueError("AZURE_OPENAI_API_KEY manquante (ou activer DRY_RUN_WITHOUT_LLM=true).")
+
+    # --- Warnings non bloquants ---
+    if cfg.use_semantic_matching and cfg.weight_semantic <= 0:
+        warnings.append("USE_SEMANTIC_MATCHING=true mais WEIGHT_SEMANTIC=0 : l'embedding ne pese rien dans le score.")
+
+    if cfg.run_consolidated_framework and not cfg.bidirectional_mapping:
+        warnings.append(
+            "RUN_CONSOLIDATED_FRAMEWORK=true mais BIDIRECTIONAL_MAPPING=false : "
+            "le Pass 2 (exigences propres a B) sera ignore. Le framework consolide "
+            "ne contiendra que A enrichi par B."
+        )
+
+    if cfg.run_consolidated_framework and not (cfg.prompt_consolidated_batch or "").strip():
+        warnings.append(
+            "RUN_CONSOLIDATED_FRAMEWORK=true mais PROMPT_CONSOLIDATED_BATCH est vide : "
+            "le texte consolide sera une simple copie de A (aucun appel LLM de consolidation)."
+        )
+
+    return warnings

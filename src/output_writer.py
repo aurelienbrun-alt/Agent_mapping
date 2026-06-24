@@ -166,6 +166,87 @@ COLORS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Final-output coverage bucketing.
+# The displayed coverage level is snapped to 0/25/50/75/100 (nearest, half up)
+# and the coverage type label is derived deterministically from that bucket.
+# This applies ONLY to the final parent sheets and the dashboard; the atomic
+# evidence sheets keep the raw granular scores.
+# ---------------------------------------------------------------------------
+COVERAGE_BUCKETS = (0, 25, 50, 75, 100)
+
+COVERAGE_TYPE_LABELS = {
+    0: "Not covered",
+    25: "Indirectly covered",
+    50: "Partially covered",
+    75: "Largely covered",
+    100: "Fully covered",
+}
+
+_BUCKET_FILL = {
+    0:   "FFC7CE",  # red
+    25:  "FCE4D6",  # light orange
+    50:  "FFF2CC",  # yellow
+    75:  "C6EFCE",  # light green
+    100: "70D987",  # strong green
+}
+
+
+def _bucket_coverage(value) -> int:
+    """Snap a raw coverage value to the nearest of 0/25/50/75/100 (ties round up)."""
+    try:
+        cov = float(value or 0)
+    except Exception:
+        cov = 0.0
+    cov = max(0.0, min(100.0, cov))
+    # key: nearest bucket; on a tie prefer the higher bucket (round half up).
+    return int(min(COVERAGE_BUCKETS, key=lambda b: (abs(b - cov), -b)))
+
+
+def _coverage_type_label(value) -> str:
+    return COVERAGE_TYPE_LABELS[_bucket_coverage(value)]
+
+
+def _bucket_fill(value) -> PatternFill | None:
+    color = _BUCKET_FILL.get(_bucket_coverage(value))
+    return PatternFill("solid", fgColor=color) if color else None
+
+
+def _entity_criticality_note(false_targets: list[tuple[str, str]], coverage: int, output_language: str) -> str:
+    """Build the 'important entities not covered' gap bullet.
+
+    false_targets is a list of (target_id, target_requirement_text) for the
+    selected target requirements flagged Important=False. The note cites what
+    those target provisions bring and why it does not apply to important entities.
+    """
+    if not false_targets:
+        return ""
+    ids = ", ".join(tid for tid, _ in false_targets if tid) or "—"
+    snippet = ""
+    for _, text in false_targets:
+        text = re.sub(r"\s+", " ", str(text or "")).strip()
+        if text:
+            snippet = text[:160].rstrip() + ("…" if len(text) > 160 else "")
+            break
+    if str(output_language or "").lower().startswith("fr"):
+        note = (
+            f"• Entités importantes : la couverture repose sur l'exigence cible {ids} "
+            f"applicable aux seules entités essentielles (Important=False). "
+            f"Au recouvrement de {coverage}%, cette obligation n'est pas couverte pour les entités importantes."
+        )
+        if snippet:
+            note += f" La cible indique : « {snippet} »."
+    else:
+        note = (
+            f"• Important entities: coverage relies on target requirement {ids} "
+            f"which applies to essential entities only (Important=False). "
+            f"At {coverage}% overlap, this obligation is not enforced for important entities."
+        )
+        if snippet:
+            note += f" The target states: “{snippet}”."
+    return note
+
+
 def build_output_filename(app_cfg: AppConfig, now: datetime | None = None) -> Path:
     now = now or datetime.now()
     name = app_cfg.output_filename_pattern.format(
@@ -186,6 +267,9 @@ def write_mapping_workbook(
     a_to_b: list[MappingDecision],
     b_to_a: list[MappingDecision] | None,
     run_id: str,
+    criticality: dict[str, dict[str, bool]] | None = None,
+    llm: Any = None,
+    logger: Any = None,
 ) -> Path:
     bidirectional = b_to_a is not None
     if app_cfg.use_output_template and app_cfg.output_template_path.exists():
@@ -199,14 +283,20 @@ def write_mapping_workbook(
     source_a_name = _display_framework_name(app_cfg.framework_a.name)
     source_b_name = _display_framework_name(app_cfg.framework_b.name)
 
-    a_parent = _build_parent_rows(a_to_b, source_a_name, source_b_name)
-    b_parent = _build_parent_rows(b_to_a or [], source_b_name, source_a_name)
+    a_parent = _build_parent_rows(a_to_b, source_a_name, source_b_name, app_cfg, criticality)
+    b_parent = _build_parent_rows(b_to_a or [], source_b_name, source_a_name, app_cfg, criticality)
+
+    # Action plan synthesis runs on the assembled parent rows so it sees the final
+    # Gap text (including the entity-criticality note when enabled).
+    if getattr(app_cfg, "enable_action_plan", False) and llm is not None and not app_cfg.dry_run_without_llm:
+        from .action_plan import run_action_plan_synthesis
+        run_action_plan_synthesis(a_parent + b_parent, app_cfg, llm, logger)
 
     _write_readme(wb, app_cfg, run_id)
     _write_dashboard(wb, app_cfg, a_parent, b_parent, a_to_b, b_to_a or [], run_id)
-    _write_parent_sheet(wb, sheet_names["a_parent"], a_parent, source_a_name, source_b_name)
+    _write_parent_sheet(wb, sheet_names["a_parent"], a_parent, source_a_name, source_b_name, app_cfg)
     if bidirectional:
-        _write_parent_sheet(wb, sheet_names["b_parent"], b_parent, source_b_name, source_a_name)
+        _write_parent_sheet(wb, sheet_names["b_parent"], b_parent, source_b_name, source_a_name, app_cfg)
     _write_coverage_by_category(wb, a_parent + b_parent)
     _write_category_quality(wb, a_to_b + (b_to_a or []))
 
@@ -285,76 +375,181 @@ def _write_readme(wb, app_cfg: AppConfig, run_id: str) -> None:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
 
 
+def _category_status(avg: float) -> tuple[str, PatternFill, PatternFill]:
+    """Return (status label, status fill, avg-coverage fill) for a category row."""
+    if avg >= 70:
+        status, status_color = "✓ Good", "C6EFCE"
+    elif avg >= 50:
+        status, status_color = "⚠ Fair", "FFEB9C"
+    else:
+        status, status_color = "✗ Poor", "FFC7CE"
+    cov_color = "C6EFCE" if avg >= 50 else "FFC7CE"
+    return status, PatternFill("solid", fgColor=status_color), PatternFill("solid", fgColor=cov_color)
+
+
+def _short_category(cat: str) -> str:
+    text = re.sub(r"^\s*\d+\.\s*", "", str(cat or "")).strip()
+    return text[:40].rstrip()
+
+
+def _dashboard_insights(all_parent: list[dict[str, Any]], by_cat: dict[str, list[dict[str, Any]]], parent_total: int) -> list[str]:
+    bodies: list[str] = []
+    cat_avgs = sorted(
+        ((cat, _avg([i["coverage_level"] for i in items])) for cat, items in by_cat.items()),
+        key=lambda x: x[1],
+    )
+    if cat_avgs:
+        worst = cat_avgs[:2]
+        parts = " and ".join(f'"{_short_category(c)}" ({a:.0f}%)' for c, a in worst)
+        bodies.append(f"PRIORITY CATEGORIES - Focus on {parts} for gap closure")
+    partial = sum(1 for r in all_parent if _bucket_coverage(r["coverage_level"]) in (25, 50))
+    bodies.append(f"COVERAGE ANALYSIS - {partial} requirement(s) partially covered; review residual evidence requirements")
+    high = sum(1 for r in all_parent if r["review_priority"] == "High")
+    bodies.append(f"HIGH PRIORITY - {high}/{parent_total} requirement(s) flagged High priority; plan remediation first")
+    entity_gaps = sum(1 for r in all_parent if r.get("entity_gap"))
+    if entity_gaps:
+        bodies.append(
+            f"IMPORTANT ENTITIES - {entity_gaps} requirement(s) covered only by essential-entity provisions; "
+            "coverage does not hold for important entities"
+        )
+    gaps = sum(1 for r in all_parent if _bucket_coverage(r["coverage_level"]) == 0)
+    bodies.append(f"TRUE GAPS - {gaps} requirement(s) not covered; assess whether compensating controls exist")
+    bodies.append("ACTION ITEMS - Develop an implementation roadmap to reach 75%+ coverage across all categories")
+    return [f"{i}. {body}" for i, body in enumerate(bodies, start=1)]
+
+
 def _write_dashboard(wb, app_cfg: AppConfig, a_parent: list[dict[str, Any]], b_parent: list[dict[str, Any]], a_to_b: list[MappingDecision], b_to_a: list[MappingDecision], run_id: str) -> None:
     ws = wb["Dashboard"]
-    _write_title(ws, "Executive dashboard", f"{_display_framework_name(app_cfg.framework_a.name)} ↔ {_display_framework_name(app_cfg.framework_b.name)} | Generated {datetime.now():%Y-%m-%d %H:%M}", 12)
     all_parent = a_parent + b_parent
     all_atomic = a_to_b + b_to_a
     parent_total = len(all_parent)
     atomic_total = len(all_atomic)
     parent_avg = _avg([r["coverage_level"] for r in all_parent])
     atomic_avg = _avg([d.coverage_level for d in all_atomic])
-    parent_gaps = sum(1 for r in all_parent if r["coverage_level"] == 0)
-    high_priority = sum(1 for r in all_parent if r["review_priority"] == "High")
 
-    kpis = [
-        ["Parent coverage", f"{parent_avg:.1f}%"],
-        ["Parent requirements", parent_total],
-        ["Parent gaps", parent_gaps],
-        ["High priority review", high_priority],
-        ["Atomic coverage", f"{atomic_avg:.1f}%"],
-        ["Atomic decisions", atomic_total],
+    navy = "1F4788"
+
+    def _section(row: int, text: str) -> None:
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
+        cell = ws.cell(row, 1, text)
+        cell.font = Font(bold=True, size=11, color=navy)
+        cell.fill = PatternFill("solid", fgColor="D9E1F2")
+        cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    # --- Title band + subtitle ---
+    ws.merge_cells("A1:H1")
+    title = ws.cell(1, 1, "Executive Dashboard - Regulatory Mapping")
+    title.font = Font(bold=True, size=16, color=COLORS["white"])
+    title.fill = PatternFill("solid", fgColor=navy)
+    title.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 30
+    ws.merge_cells("A2:H2")
+    subtitle = ws.cell(
+        2, 1,
+        f"{_display_framework_name(app_cfg.framework_a.name)} ↔ {_display_framework_name(app_cfg.framework_b.name)} "
+        f"| Generated {datetime.now():%Y-%m-%d}",
+    )
+    subtitle.font = Font(size=10, color=COLORS["text"])
+
+    # --- KEY METRICS ---
+    _section(4, "KEY METRICS")
+    metrics = [
+        ("Parent Coverage %", f"{parent_avg:.1f}%"),
+        ("Parent Requirements", parent_total),
+        ("Atomic Coverage %", f"{atomic_avg:.1f}%"),
+        ("Total Atomic Decisions", atomic_total),
     ]
-    start_cols = [1, 3, 5, 7, 9, 11]
-    for idx, (label, value) in enumerate(kpis):
-        col = start_cols[idx]
-        ws.cell(4, col).value = label
-        ws.cell(4, col).font = Font(bold=True, color=COLORS["white"])
-        ws.cell(4, col).fill = PatternFill("solid", fgColor=COLORS["blue"])
-        ws.cell(5, col).value = value
-        ws.cell(5, col).font = Font(bold=True, size=16, color=COLORS["navy"])
-        ws.cell(5, col).fill = PatternFill("solid", fgColor=COLORS["grey"])
-        ws.merge_cells(start_row=4, start_column=col, end_row=4, end_column=col + 1)
-        ws.merge_cells(start_row=5, start_column=col, end_row=5, end_column=col + 1)
+    for (label, value), lc in zip(metrics, (1, 3, 5, 7)):
+        lab = ws.cell(5, lc, label)
+        lab.font = Font(bold=True, size=10)
+        val = ws.cell(5, lc + 1, value)
+        val.font = Font(bold=True, size=14, color="C65911")
+        val.fill = PatternFill("solid", fgColor="FFF2CC")
+        val.alignment = Alignment(horizontal="center", vertical="center")
 
-    dist = Counter(r["coverage_relationship"] for r in all_parent)
-    dist_rows = [["Coverage relationship", "Count"]] + [[k, v] for k, v in dist.items()]
-    _write_table(ws, 8, 1, dist_rows)
-    if len(dist_rows) > 1:
-        pie = PieChart()
-        labels = Reference(ws, min_col=1, min_row=9, max_row=8 + len(dist_rows) - 1)
-        data = Reference(ws, min_col=2, min_row=8, max_row=8 + len(dist_rows) - 1)
-        pie.add_data(data, titles_from_data=True)
-        pie.set_categories(labels)
-        pie.title = "Parent relationship distribution"
-        pie.height = 7
-        pie.width = 10
-        ws.add_chart(pie, "E8")
+    # --- COVERAGE RELATIONSHIP (bucketed coverage types) ---
+    _section(8, "COVERAGE RELATIONSHIP")
+    for col, head in enumerate(["Coverage Type", "Count", "Percentage"], start=1):
+        hc = ws.cell(9, col, head)
+        hc.font = Font(bold=True, size=10, color=COLORS["white"])
+        hc.fill = PatternFill("solid", fgColor="4472C4")
+        hc.alignment = Alignment(horizontal="center", vertical="center")
+    counts = Counter(_coverage_type_label(r["coverage_level"]) for r in all_parent)
+    row = 10
+    for bucket in (100, 75, 50, 25, 0):
+        label = COVERAGE_TYPE_LABELS[bucket]
+        cnt = counts.get(label, 0)
+        if cnt == 0:
+            continue
+        pct = (cnt / parent_total * 100) if parent_total else 0
+        fill = PatternFill("solid", fgColor=_BUCKET_FILL[bucket])
+        ca = ws.cell(row, 1, label); ca.fill = fill
+        cb = ws.cell(row, 2, cnt); cb.fill = fill; cb.alignment = Alignment(horizontal="center")
+        cp = ws.cell(row, 3, f"{pct:.1f}%"); cp.fill = fill; cp.alignment = Alignment(horizontal="center")
+        row += 1
 
-    cat_rows = _coverage_by_category_rows(all_parent)
-    _write_table(ws, 25, 1, [["ENISA category", "Requirements", "Coverage %", "High priority"]] + cat_rows[:12])
-    if cat_rows:
-        chart = BarChart()
-        data = Reference(ws, min_col=3, min_row=25, max_row=25 + len(cat_rows[:12]))
-        cats = Reference(ws, min_col=1, min_row=26, max_row=25 + len(cat_rows[:12]))
-        chart.add_data(data, titles_from_data=True)
-        chart.set_categories(cats)
-        chart.title = "Coverage by ENISA category"
-        chart.y_axis.title = "Coverage %"
-        chart.height = 8
-        chart.width = 18
-        ws.add_chart(chart, "E25")
+    # --- COVERAGE BY ENISA CATEGORY ---
+    cat_section_row = row + 1
+    _section(cat_section_row, "COVERAGE BY ENISA CATEGORY")
+    head_row = cat_section_row + 1
+    for col, head in enumerate(
+        ["ENISA Category", "Requirements", "Avg Coverage %", "Status", "High Priority", "Medium Priority"], start=1
+    ):
+        hc = ws.cell(head_row, col, head)
+        hc.font = Font(bold=True, size=10, color=COLORS["white"])
+        hc.fill = PatternFill("solid", fgColor="70AD47")
+        hc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    by_cat: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in all_parent:
+        by_cat[r["domain"]].append(r)
+    data_row = head_row + 1
+    for cat in sorted(by_cat):
+        items = by_cat[cat]
+        avg = _avg([i["coverage_level"] for i in items])
+        high = sum(1 for i in items if i["review_priority"] == "High")
+        medium = sum(1 for i in items if i["review_priority"] == "Medium")
+        status, status_fill, cov_fill = _category_status(avg)
+        ws.cell(data_row, 1, cat).alignment = Alignment(vertical="center", wrap_text=True)
+        ws.cell(data_row, 2, len(items)).alignment = Alignment(horizontal="center")
+        cov_cell = ws.cell(data_row, 3, round(avg, 1)); cov_cell.fill = cov_fill
+        cov_cell.alignment = Alignment(horizontal="center")
+        st = ws.cell(data_row, 4, status); st.fill = status_fill
+        st.alignment = Alignment(horizontal="center")
+        ws.cell(data_row, 5, high).alignment = Alignment(horizontal="center")
+        ws.cell(data_row, 6, medium).alignment = Alignment(horizontal="center")
+        data_row += 1
 
-    ws.column_dimensions["A"].width = 34
-    for c in range(2, 13):
+    # --- KEY INSIGHTS & RECOMMENDATIONS ---
+    insights_row = data_row + 1
+    _section(insights_row, "KEY INSIGHTS & RECOMMENDATIONS")
+    for offset, text in enumerate(_dashboard_insights(all_parent, by_cat, parent_total), start=1):
+        line = insights_row + offset
+        ws.merge_cells(start_row=line, start_column=1, end_row=line, end_column=8)
+        cell = ws.cell(line, 1, text)
+        cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    ws.column_dimensions["A"].width = 42
+    for c in range(2, 9):
         ws.column_dimensions[get_column_letter(c)].width = 16
 
 
-def _write_parent_sheet(wb, sheet_name: str, rows: list[dict[str, Any]], source_name: str, target_name: str) -> None:
+def _parent_headers(app_cfg: AppConfig | None = None) -> list[str]:
+    base = list(PARENT_HEADERS)  # ends with "Review priority"
+    headers = base[:-1]
+    if app_cfg and getattr(app_cfg, "enable_action_plan", False):
+        headers.append("Action plan")
+    headers.append(base[-1])
+    if app_cfg and getattr(app_cfg, "enable_entity_criticality", False):
+        headers += ["Essential", "Important"]
+    return headers
+
+
+def _write_parent_sheet(wb, sheet_name: str, rows: list[dict[str, Any]], source_name: str, target_name: str, app_cfg: AppConfig | None = None) -> None:
     ws = wb[sheet_name]
-    _write_title(ws, f"{source_name} → {target_name}", "Parent-level regulatory mapping. Detailed evidence is available in the atomic detail sheet.", len(PARENT_HEADERS))
-    _write_table(ws, 4, 1, [PARENT_HEADERS] + [_parent_row_values(r) for r in rows])
-    _format_parent_sheet(ws, len(rows) + 4)
+    headers = _parent_headers(app_cfg)
+    _write_title(ws, f"{source_name} → {target_name}", "Parent-level regulatory mapping. Detailed evidence is available in the atomic detail sheet.", len(headers))
+    _write_table(ws, 4, 1, [headers] + [_parent_row_values(r, app_cfg) for r in rows])
+    _format_parent_sheet(ws, len(rows) + 4, app_cfg)
 
 
 def _write_atomic_sheet(wb, sheet_name: str, decisions: list[MappingDecision], source_name: str, target_name: str) -> None:
@@ -485,11 +680,20 @@ def _build_target_listings(
     return result_ids, result_reqs
 
 
-def _build_parent_rows(decisions: list[MappingDecision], source_name: str, target_name: str) -> list[dict[str, Any]]:
+def _build_parent_rows(
+    decisions: list[MappingDecision],
+    source_name: str,
+    target_name: str,
+    app_cfg: AppConfig | None = None,
+    criticality: dict[str, dict[str, bool]] | None = None,
+) -> list[dict[str, Any]]:
     grouped: dict[str, list[MappingDecision]] = defaultdict(list)
     for d in decisions:
         raw_key = d.source_parent_id or _parent_id(d.source_id)
         grouped[_clean_display_id(raw_key)].append(d)
+
+    criticality_enabled = bool(app_cfg and getattr(app_cfg, "enable_entity_criticality", False))
+    output_language = getattr(app_cfg, "output_language", "en") if app_cfg else "en"
 
     rows = []
     for parent_id, items in sorted(grouped.items(), key=lambda kv: kv[0]):
@@ -505,6 +709,31 @@ def _build_parent_rows(decisions: list[MappingDecision], source_name: str, targe
         gap = _llm_parent_gap_summary(items) or _parent_gap_summary(items, target_name)
         priority = _priority(coverage, items)
         risk = _risk(coverage, items)
+
+        source_essential = True
+        source_important = False
+        entity_gap = False
+        if criticality_enabled:
+            src_flags = (criticality or {}).get(parent_id, {})
+            source_essential = bool(src_flags.get("essential", True))
+            source_important = bool(src_flags.get("important", False))
+            # Gap rule: a source applicable to important entities (Important=True)
+            # is covered by >=1 target requirement that is NOT applicable to
+            # important entities (Important=False) -> flag the residual gap and
+            # escalate the review priority.
+            if source_important and coverage > 0:
+                false_targets = [
+                    (tid, req)
+                    for tid, req in zip(target_parent_ids, target_parent_requirements)
+                    if not (criticality or {}).get(_clean_display_id(tid), {}).get("important", False)
+                ]
+                if false_targets:
+                    note = _entity_criticality_note(false_targets, _bucket_coverage(coverage), output_language)
+                    if note:
+                        gap = f"{gap}\n\n{note}" if gap else note
+                        priority = "High"
+                        entity_gap = True
+
         rows.append({
             "source_regulation": source_name,
             "target_regulation": target_name,
@@ -520,6 +749,9 @@ def _build_parent_rows(decisions: list[MappingDecision], source_name: str, targe
             "gap": gap,
             "review_priority": priority,
             "mapping_risk": risk,
+            "source_essential": source_essential,
+            "source_important": source_important,
+            "entity_gap": entity_gap,
         })
     return rows
 
@@ -951,10 +1183,13 @@ def _split_gap_text(gap: str) -> tuple[str, str]:
     return " ".join(synthesis_lines).strip(), "\n".join(detail_lines).strip()
 
 
-def _parent_row_values(r: dict[str, Any]) -> list[Any]:
+def _parent_row_values(r: dict[str, Any], app_cfg: AppConfig | None = None) -> list[Any]:
     gap_synthesis, gap_detail = _split_gap_text(r["gap"])
-    coverage_display = 0 if r["coverage_relationship"] == "Not covered" else int(round(r["coverage_level"]))
-    return [
+    # Final output: snap coverage to 0/25/50/75/100 and derive the coverage type
+    # label deterministically from that bucket so the two columns stay consistent.
+    coverage_display = _bucket_coverage(r["coverage_level"])
+    relationship_display = _coverage_type_label(r["coverage_level"])
+    values = [
         r["source_regulation"],
         _clean_display_id(r["source_parent_id"]),
         r["source_parent_requirement"],
@@ -962,12 +1197,18 @@ def _parent_row_values(r: dict[str, Any]) -> list[Any]:
         r["target_regulation"],
         ", ".join(r["target_parent_ids"]),
         "\n---\n".join(r["target_parent_requirements"]),
-        r["coverage_relationship"],
+        relationship_display,
         coverage_display,
         gap_synthesis,
         gap_detail,
-        r["review_priority"],
     ]
+    if app_cfg and getattr(app_cfg, "enable_action_plan", False):
+        values.append(r.get("action_plan", ""))
+    values.append(r["review_priority"])
+    if app_cfg and getattr(app_cfg, "enable_entity_criticality", False):
+        values.append("True" if r.get("source_essential", True) else "False")
+        values.append("True" if r.get("source_important", False) else "False")
+    return values
 
 
 def _write_table(ws, start_row: int, start_col: int, matrix: list[list[Any]], table_style: bool = True) -> None:
@@ -1023,26 +1264,62 @@ def _coverage_fill(value) -> PatternFill | None:
     return PatternFill("solid", fgColor=color) if color else None
 
 
-def _format_parent_sheet(ws, max_row: int) -> None:
-    # 12 columns: Source reg, Source ID, Source req, ENISA cat, Target reg, Target IDs, Target reqs, Coverage rel, Coverage level, Gap, Detailed gap, Priority
-    widths = [24, 22, 70, 48, 24, 28, 70, 22, 14, 55, 60, 18]
-    for i, width in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = width
+_PARENT_COL_WIDTHS = {
+    "Source regulation": 24,
+    "Source control ID": 22,
+    "Source requirement": 70,
+    "ENISA category": 48,
+    "Target regulation": 24,
+    "Target control ID(s)": 28,
+    "Target requirement(s)": 70,
+    "Coverage relationship": 22,
+    "Coverage level": 14,
+    "Gap": 55,
+    "Detailed gap": 60,
+    "Action plan": 55,
+    "Review priority": 18,
+    "Essential": 12,
+    "Important": 12,
+}
+
+
+def _format_parent_sheet(ws, max_row: int, app_cfg: AppConfig | None = None) -> None:
+    # Column positions are resolved by header name (row 4) so optional columns
+    # (Action plan, Essential, Important) don't break fixed indices.
+    headers = [ws.cell(4, c).value for c in range(1, ws.max_column + 1)]
+    col = {h: i + 1 for i, h in enumerate(headers) if h}
+    for i, header in enumerate(headers, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = _PARENT_COL_WIDTHS.get(header, 20)
+
+    cov_rel_c = col.get("Coverage relationship")
+    cov_lvl_c = col.get("Coverage level")
+    priority_c = col.get("Review priority")
+    essential_c = col.get("Essential")
+    important_c = col.get("Important")
+    priority_fill = {
+        "High": COLORS["light_red"],
+        "Medium": COLORS["light_yellow"],
+        "Low": COLORS["light_green"],
+    }
+
     for r in range(5, max_row + 1):
         ws.row_dimensions[r].height = 60
-        # Coverage relationship (col H=8) and Coverage level (col I=9) share the same color
-        cov_fill = _coverage_fill(ws.cell(r, 9).value)
-        if cov_fill:
-            ws.cell(r, 8).fill = cov_fill
-            ws.cell(r, 9).fill = cov_fill
-        # Review priority is column L (12)
-        priority = str(ws.cell(r, 12).value or "")
-        if priority == "High":
-            ws.cell(r, 12).fill = PatternFill("solid", fgColor=COLORS["light_red"])
-        elif priority == "Medium":
-            ws.cell(r, 12).fill = PatternFill("solid", fgColor=COLORS["light_yellow"])
-        elif priority == "Low":
-            ws.cell(r, 12).fill = PatternFill("solid", fgColor=COLORS["light_green"])
+        # Coverage relationship + Coverage level share the 0/25/50/75/100 palette.
+        if cov_lvl_c:
+            cov_fill = _bucket_fill(ws.cell(r, cov_lvl_c).value)
+            if cov_fill:
+                if cov_rel_c:
+                    ws.cell(r, cov_rel_c).fill = cov_fill
+                ws.cell(r, cov_lvl_c).fill = cov_fill
+        if priority_c:
+            color = priority_fill.get(str(ws.cell(r, priority_c).value or ""))
+            if color:
+                ws.cell(r, priority_c).fill = PatternFill("solid", fgColor=color)
+        for c in (essential_c, important_c):
+            if c:
+                ws.cell(r, c).alignment = Alignment(horizontal="center", vertical="center")
+        if important_c and str(ws.cell(r, important_c).value or "") == "True":
+            ws.cell(r, important_c).fill = PatternFill("solid", fgColor=COLORS["light_blue"])
 
 
 def _format_atomic_sheet(ws, max_row: int) -> None:

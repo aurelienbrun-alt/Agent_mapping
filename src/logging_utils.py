@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ class JsonlRunLogger:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.jsonl_path = self.log_dir / f"{run_id}.jsonl"
         self.text_path = self.log_dir / f"{run_id}.log"
+        self._lock = threading.Lock()
 
         self.logger = logging.getLogger(run_id)
         self.logger.setLevel(logging.INFO)
@@ -24,14 +26,16 @@ class JsonlRunLogger:
 
     def event(self, step: str, status: str = "info", **data: Any) -> None:
         payload = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "run_id": self.run_id,
             "step": step,
             "status": status,
             **data,
         }
-        with self.jsonl_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        line = json.dumps(payload, ensure_ascii=False, default=str) + "\n"
+        with self._lock:
+            with self.jsonl_path.open("a", encoding="utf-8") as f:
+                f.write(line)
         self.logger.info("%s %s %s", step, status, json.dumps(data, ensure_ascii=False, default=str))
 
     def error(self, step: str, exc: Exception, **data: Any) -> None:
