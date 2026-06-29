@@ -83,6 +83,7 @@ def main() -> None:
             api_version=cfg.azure_openai_api_version,
             text_deployment=cfg.azure_openai_text_deployment,
             judge_deployment=cfg.azure_openai_judge_deployment,
+            final_judge_deployment=cfg.azure_openai_final_judge_deployment,
             embedding_deployment=cfg.azure_openai_embedding_deployment,
             temperature=cfg.azure_openai_temperature,
             embedding_dimensions=cfg.azure_openai_embedding_dimensions,

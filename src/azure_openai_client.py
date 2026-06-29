@@ -67,6 +67,7 @@ class AzureOpenAIClient:
         embedding_deployment: str,
         temperature: float,
         embedding_dimensions: int = 0,
+        final_judge_deployment: str = "",
         dry_run: bool = False,
     ) -> None:
         self.api_key = api_key
@@ -74,6 +75,9 @@ class AzureOpenAIClient:
         self.api_version = api_version
         self.text_deployment = text_deployment
         self.judge_deployment = judge_deployment or text_deployment
+        # The final judge can run on a stronger model than the pairwise match.
+        # Falls back to the pairwise judge deployment when not configured.
+        self.final_judge_deployment = final_judge_deployment or self.judge_deployment
         self.embedding_deployment = embedding_deployment
         self.temperature = temperature
         self.embedding_dimensions = embedding_dimensions
@@ -138,6 +142,9 @@ class AzureOpenAIClient:
 
     def judge_json(self, prompt: str) -> dict[str, Any]:
         return self.generate_json(prompt, model=self.judge_deployment)
+
+    def final_judge_json(self, prompt: str) -> dict[str, Any]:
+        return self.generate_json(prompt, model=self.final_judge_deployment)
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if self.dry_run:

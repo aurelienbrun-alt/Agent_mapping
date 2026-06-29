@@ -23,7 +23,27 @@
       "Bash(.venv\\\\Scripts\\\\python.exe -c \"from src.consolidated_framework import run_consolidated_framework, ConsolidatedRequirement; from src.consolidated_output_writer import write_consolidated_workbook; from src.config import load_config; print\\('imports OK'\\)\")",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(.venv/Scripts/python.exe -c ' *)",
-      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c ' *)"
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c ' *)",
+      "Bash(python -c ' *)",
+      "Bash(PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe -c ' *)",
+      "Bash(PYTHONIOENCODING=utf-8 grep -n \"partially covered\\\\|Parent Coverage\\\\|coverage_level\\\\|avg_cov\\\\|mean\\\\|_bucket\\\\|partially\\\\|Gaps\\\\b\" src/output_writer.py)",
+      "Read(//c/Users/000023026/OneDrive - Wavestone/Desktop/**)",
+      "Bash(PYTHONIOENCODING=utf-8 '/c/Users/000023026/OneDrive - Wavestone/Desktop/mapper/.venv/Scripts/python.exe' -c ' *)",
+      "Bash(cp \"C:/Users/000023026/OneDrive - Wavestone/Desktop/Comparaison_mapping.xlsx\" \"C:/Users/000023026/OneDrive - Wavestone/Desktop/mapper/_cmp.xlsx\")",
+      "Bash(PYTHONIOENCODING=utf-8 grep -rn \"mapping_decision_cache_file\\\\|parent_gap_synthesis_cache_file\\\\|_cache_path\\\\|mapping_decisions\" src/matching.py src/parent_gap_synthesis.py)",
+      "Bash(cp \"C:/Users/000023026/OneDrive - Wavestone/Desktop/mapper/data/Framework_2_France.xlsx\" \"C:/Users/000023026/OneDrive - Wavestone/Desktop/mapper/_fr.xlsx\")",
+      "Bash(PYTHONIOENCODING=utf-8 grep -nE \"judge_json|generate_json|llm\\\\.|\\\\.chat\" src/matching.py)",
+      "mcp__visualize__read_me",
+      "mcp__visualize__show_widget",
+      "WebSearch",
+      "Read(//c/Users/000023026/AppData/Local/Temp/**)",
+      "Bash(python build_grc.py)",
+      "Bash(cd \"C:\\\\Users\\\\000023026\\\\AppData\\\\Local\\\\Temp\" && find \"C:/Users/000023026/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin\" -name \"recalc.py\" 2>/dev/null | head -1)",
+      "Bash(python \"C:/Users/000023026/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/a7feb630-f94e-4b67-b3f3-7f2147b623b1/19a451d7-2462-40ba-b47a-0dc4a51b0f7d/skills/xlsx/scripts/recalc.py\" grc_threat_modeling_market_leadership_taxonomy_scores.xlsx)",
+      "PowerShell($paths = @\\(\"C:\\\\Program Files\\\\LibreOffice\\\\program\\\\soffice.exe\",\"C:\\\\Program Files \\(x86\\)\\\\LibreOffice\\\\program\\\\soffice.exe\"\\); foreach\\($p in $paths\\){ if\\(Test-Path $p\\){ Write-Output \"FOUND: $p\" } }; if\\(-not \\($paths | Where-Object {Test-Path $_}\\)\\){ Write-Output \"NOT FOUND\" })",
+      "PowerShell($src=\"C:\\\\Users\\\\000023026\\\\AppData\\\\Local\\\\Temp\\\\grc_threat_modeling_market_leadership_taxonomy_scores.xlsx\"; $dst=\"C:\\\\Users\\\\000023026\\\\Downloads\\\\grc_threat_modeling_market_leadership_taxonomy_scores.xlsx\"; Copy-Item $src $dst -Force; if\\(Test-Path $dst\\){ $f=Get-Item $dst; Write-Output \\(\"OK: \"+$f.FullName+\" \\(\"+[math]::Round\\($f.Length/1kb,1\\)+\" KB\\)\"\\) })",
+      "WebFetch(domain:github.com)",
+      "Bash(python build_ota.py)"
     ]
   }
 }

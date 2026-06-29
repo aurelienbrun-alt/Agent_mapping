@@ -226,7 +226,7 @@ def _entity_criticality_note(false_targets: list[tuple[str, str]], coverage: int
     for _, text in false_targets:
         text = re.sub(r"\s+", " ", str(text or "")).strip()
         if text:
-            snippet = text[:160].rstrip() + ("…" if len(text) > 160 else "")
+            snippet = text[:80].rstrip() + ("…" if len(text) > 80 else "")
             break
     if str(output_language or "").lower().startswith("fr"):
         note = (
@@ -395,15 +395,16 @@ def _short_category(cat: str) -> str:
 def _dashboard_insights(all_parent: list[dict[str, Any]], by_cat: dict[str, list[dict[str, Any]]], parent_total: int) -> list[str]:
     bodies: list[str] = []
     cat_avgs = sorted(
-        ((cat, _avg([i["coverage_level"] for i in items])) for cat, items in by_cat.items()),
+        ((cat, _avg([_bucket_coverage(i["coverage_level"]) for i in items])) for cat, items in by_cat.items()),
         key=lambda x: x[1],
     )
     if cat_avgs:
         worst = cat_avgs[:2]
         parts = " and ".join(f'"{_short_category(c)}" ({a:.0f}%)' for c, a in worst)
         bodies.append(f"PRIORITY CATEGORIES - Focus on {parts} for gap closure")
-    partial = sum(1 for r in all_parent if _bucket_coverage(r["coverage_level"]) in (25, 50))
-    bodies.append(f"COVERAGE ANALYSIS - {partial} requirement(s) partially covered; review residual evidence requirements")
+    partial = sum(1 for r in all_parent if _bucket_coverage(r["coverage_level"]) == 50)
+    indirect = sum(1 for r in all_parent if _bucket_coverage(r["coverage_level"]) == 25)
+    bodies.append(f"COVERAGE ANALYSIS - {partial} requirement(s) partially covered (50%) and {indirect} indirectly covered (25%); review residual evidence requirements")
     high = sum(1 for r in all_parent if r["review_priority"] == "High")
     bodies.append(f"HIGH PRIORITY - {high}/{parent_total} requirement(s) flagged High priority; plan remediation first")
     entity_gaps = sum(1 for r in all_parent if r.get("entity_gap"))
@@ -424,7 +425,10 @@ def _write_dashboard(wb, app_cfg: AppConfig, a_parent: list[dict[str, Any]], b_p
     all_atomic = a_to_b + b_to_a
     parent_total = len(all_parent)
     atomic_total = len(all_atomic)
-    parent_avg = _avg([r["coverage_level"] for r in all_parent])
+    # Parent coverage is reported on the bucketed values shown in the detail sheet,
+    # so the dashboard reconciles exactly with the per-row Coverage level column.
+    # Atomic coverage stays raw because the atomic detail sheets are not bucketed.
+    parent_avg = _avg([_bucket_coverage(r["coverage_level"]) for r in all_parent])
     atomic_avg = _avg([d.coverage_level for d in all_atomic])
 
     navy = "1F4788"
@@ -505,7 +509,7 @@ def _write_dashboard(wb, app_cfg: AppConfig, a_parent: list[dict[str, Any]], b_p
     data_row = head_row + 1
     for cat in sorted(by_cat):
         items = by_cat[cat]
-        avg = _avg([i["coverage_level"] for i in items])
+        avg = _avg([_bucket_coverage(i["coverage_level"]) for i in items])
         high = sum(1 for i in items if i["review_priority"] == "High")
         medium = sum(1 for i in items if i["review_priority"] == "Medium")
         status, status_fill, cov_fill = _category_status(avg)
@@ -591,11 +595,11 @@ def _write_coverage_by_category(wb, rows: list[dict[str, Any]]) -> None:
             category,
             count,
             cov,
-            sum(1 for r in items if r["coverage_level"] == 0),
+            sum(1 for r in items if _bucket_coverage(r["coverage_level"]) == 0),
             sum(1 for r in items if r["review_priority"] == "High"),
             sum(1 for r in items if r["review_priority"] == "Medium"),
             sum(1 for r in items if r["review_priority"] == "Low"),
-            sum(1 for r in items if r["coverage_level"] == 100),
+            sum(1 for r in items if _bucket_coverage(r["coverage_level"]) == 100),
         ])
     _write_table(ws, 4, 1, matrix)
     _style_table_body(ws, 4, len(matrix), len(matrix[0]))
@@ -698,7 +702,15 @@ def _build_parent_rows(
     rows = []
     for parent_id, items in sorted(grouped.items(), key=lambda kv: kv[0]):
         total = len(items)
-        coverage = int(round(sum(d.coverage_level for d in items) / total)) if total else 0
+        # Parent coverage blends the mean with the max so a strongly-covered core
+        # obligation is not diluted to ~50% by weaker peripheral atoms. A pure mean
+        # systematically under-rated parents whose key obligation was well covered.
+        if total:
+            _mean = sum(d.coverage_level for d in items) / total
+            _max = max(d.coverage_level for d in items)
+            coverage = int(round(0.6 * _mean + 0.4 * _max))
+        else:
+            coverage = 0
         items_for_targets = sorted(_select_items_for_target_listing(items), key=lambda d: d.coverage_level, reverse=True)
         target_parent_ids, target_parent_requirements = _build_target_listings(items_for_targets)
         source_req = next((d.source_parent_requirement for d in items if d.source_parent_requirement), items[0].source_requirement if items else "")
@@ -1339,7 +1351,7 @@ def _coverage_by_category_rows(rows: list[dict[str, Any]]) -> list[list[Any]]:
         result.append([
             cat,
             len(items),
-            round(_avg([i["coverage_level"] for i in items]), 1),
+            round(_avg([_bucket_coverage(i["coverage_level"]) for i in items]), 1),
             sum(1 for i in items if i["review_priority"] == "High"),
         ])
     return result
