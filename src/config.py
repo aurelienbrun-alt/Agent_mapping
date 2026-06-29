@@ -32,6 +32,7 @@ class AppConfig:
     azure_openai_api_version: str
     azure_openai_text_deployment: str
     azure_openai_judge_deployment: str
+    azure_openai_final_judge_deployment: str
     azure_openai_category_deployment: str
     azure_openai_embedding_deployment: str
     azure_openai_temperature: float
@@ -201,7 +202,10 @@ def _path(root: Path, value: str) -> Path:
 def load_config(env_path: str | Path = ".env") -> AppConfig:
     root = project_root()
     env_file = _path(root, str(env_path))
-    load_dotenv(env_file)
+    # override=True makes the .env file authoritative: edits to .env always take
+    # effect, even if a stale variable with the same name lingers in the process
+    # environment (a common python-dotenv gotcha that silently ignores .env edits).
+    load_dotenv(env_file, override=True)
 
     framework_a = FrameworkConfig(
         name=_env("FRAMEWORK_A_NAME", "FrameworkA"),
@@ -235,6 +239,8 @@ def load_config(env_path: str | Path = ".env") -> AppConfig:
         azure_openai_api_version=_env("AZURE_OPENAI_API_VERSION", "2024-02-01"),
         azure_openai_text_deployment=_env("AZURE_OPENAI_TEXT_DEPLOYMENT", "gpt-4.1-nano"),
         azure_openai_judge_deployment=_env("AZURE_OPENAI_JUDGE_DEPLOYMENT", _env("AZURE_OPENAI_TEXT_DEPLOYMENT", "gpt-4.1-nano")),
+        # Final judge can use a stronger model than the pairwise match; empty falls back to the judge deployment.
+        azure_openai_final_judge_deployment=_env("AZURE_OPENAI_FINAL_JUDGE_DEPLOYMENT", ""),
         azure_openai_category_deployment=_env("AZURE_OPENAI_CATEGORY_DEPLOYMENT", _env("AZURE_OPENAI_TEXT_DEPLOYMENT", "gpt-4.1-nano")),
         azure_openai_embedding_deployment=_env("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small"),
         azure_openai_temperature=as_float(_env("AZURE_OPENAI_TEMPERATURE"), 0.1),

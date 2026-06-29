@@ -123,7 +123,7 @@ def run_final_judge(decisions: list[MappingDecision], app_cfg: AppConfig, llm: A
             mapping_results_json=json.dumps(payload, ensure_ascii=False, indent=2),
         )
         try:
-            result = llm.judge_json(prompt)
+            result = llm.final_judge_json(prompt)
             summary = str(result.get("summary") or "")
             corrections = result.get("corrections") or []
             for corr in corrections:
