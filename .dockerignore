@@ -1,0 +1,14 @@
+.venv/
+.git/
+.claude/
+.env
+.env.*
+__pycache__/
+*.pyc
+*.pyo
+*.pptx
+logs/
+output/
+reports/
+docs/cache/
+webapp/frontend/node_modules/

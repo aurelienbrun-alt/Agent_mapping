@@ -104,3 +104,7 @@ class MappingDecision:
     mapping_risk: str = ""
     scoring_rationale: str = ""
     b_contribution: str = ""
+    # Judge's deliberate functional-domain verdict from the pairwise decomposition.
+    # False = genuinely different domain (definitive true gap): candidate rescue must
+    # not override it using retrieval similarity. None = not assessed (rescue as before).
+    same_functional_domain: bool | None = None

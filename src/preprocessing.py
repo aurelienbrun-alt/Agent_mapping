@@ -32,6 +32,49 @@ def active_embedding_model_name(app_cfg: AppConfig) -> str:
     return f"{dep} ({dims} dims)" if dims else dep
 
 
+def _valid_embedding(emb: Any) -> bool:
+    """True only for a non-empty numeric vector. Catches None and [] alike."""
+    return isinstance(emb, (list, tuple)) and len(emb) > 0
+
+
+def repair_missing_embeddings(
+    atoms: list[AtomicRequirement],
+    framework_cfg: FrameworkConfig,
+    app_cfg: AppConfig,
+    llm: AzureOpenAIClient,
+    logger: JsonlRunLogger,
+) -> list[AtomicRequirement]:
+    """Re-embed atoms whose cached embedding is empty or malformed.
+
+    Because a processed cache is returned verbatim, an atom persisted with
+    ``embedding == []`` would otherwise remain permanently unretrievable. This
+    guard detects those atoms on load and recomputes only the missing vectors,
+    then rewrites the fields and processed caches so the repair persists.
+    """
+    missing = [a for a in atoms if not _valid_embedding(getattr(a, "embedding", None))]
+    if not missing:
+        return atoms
+    logger.event("cache.repair.embeddings.detected", framework=framework_cfg.name, missing=len(missing), total=len(atoms))
+    if app_cfg.dry_run_without_llm:
+        logger.event("cache.repair.embeddings.skipped_dry_run", framework=framework_cfg.name, missing=len(missing))
+        return atoms
+    batch_size = 64
+    for start in range(0, len(missing), batch_size):
+        batch = missing[start:start + batch_size]
+        embeddings = llm.embed_texts([embedding_text(a) for a in batch])
+        for atom, emb in zip(batch, embeddings):
+            atom.embedding = emb
+    save_fields_cache(framework_cfg, app_cfg, atoms)
+    save_processed_cache(
+        framework_cfg,
+        app_cfg,
+        atoms,
+        metadata={"embedding_model": active_embedding_model_name(app_cfg), "embedding_repair": len(missing)},
+    )
+    logger.event("cache.repair.embeddings.done", framework=framework_cfg.name, repaired=len(missing), model=active_embedding_model_name(app_cfg))
+    return atoms
+
+
 def process_framework(framework_cfg: FrameworkConfig, app_cfg: AppConfig, llm: AzureOpenAIClient, logger: JsonlRunLogger) -> list[AtomicRequirement]:
     cdir = cache_dir(framework_cfg, app_cfg)
     logger.event(
@@ -46,6 +89,11 @@ def process_framework(framework_cfg: FrameworkConfig, app_cfg: AppConfig, llm: A
         logger.event("cache.load", framework=framework_cfg.name, count=len(cached), cache_dir=str(cdir))
         if app_cfg.repair_cache_categories:
             cached = repair_atoms_categories(cached, framework_cfg, app_cfg, llm, logger, save_cache=True)
+        # A processed cache is returned verbatim, so the embedding step below never
+        # runs on a cache hit. Guard against atoms persisted with an empty/malformed
+        # embedding (they would stay permanently unretrievable and silently degrade
+        # retrieval, e.g. falling back to an off-topic candidate).
+        cached = repair_missing_embeddings(cached, framework_cfg, app_cfg, llm, logger)
         return cached
 
     logger.event("framework.read.start", framework=framework_cfg.name, file=str(framework_cfg.file))
