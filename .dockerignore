@@ -1,14 +1,24 @@
-.venv/
+# Keep the build context small. NOTE: .env is intentionally NOT ignored — the
+# build sanitizes it (drops the API key) in a discarded stage. data/, config/ and
+# templates/ Excel files ARE needed and must not be excluded.
 .git/
-.claude/
-.env
-.env.*
-__pycache__/
-*.pyc
-*.pyo
-*.pptx
+.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Frontend build artifacts (rebuilt inside the image)
+webapp/frontend/node_modules/
+webapp/frontend/dist/
+
+# Runtime output / caches (regenerated at runtime)
+docs/cache/
 logs/
 output/
 reports/
-docs/cache/
-webapp/frontend/node_modules/
+# User-imported frameworks are runtime data (persist via a volume on /app/data/custom)
+data/custom/
+
+# Large / irrelevant to the image
+*.pptx
+.claude/
