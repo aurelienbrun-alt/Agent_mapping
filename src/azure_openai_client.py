@@ -6,6 +6,7 @@ import random
 import time
 from typing import Any, Callable, TypeVar
 
+from .cost import UsageTracker
 from .utils import stable_hash, tokenize
 
 T = TypeVar("T")
@@ -83,6 +84,9 @@ class AzureOpenAIClient:
         self.embedding_dimensions = embedding_dimensions
         self.dry_run = dry_run
         self._client = None
+        # Accumulates token usage per deployment across the whole run so the
+        # total cost can be estimated at the end (see src/cost.py).
+        self.usage = UsageTracker()
 
         if not dry_run:
             if not api_key or api_key == "PASTE_YOUR_AZURE_OPENAI_API_KEY_HERE":
@@ -137,6 +141,7 @@ class AzureOpenAIClient:
             ),
             what=f"chat.completions[{deployment}]",
         )
+        self._record_usage(deployment, getattr(response, "usage", None))
         text = response.choices[0].message.content or ""
         return self._parse_json(text)
 
@@ -167,9 +172,18 @@ class AzureOpenAIClient:
                 lambda kwargs=kwargs: self._client.embeddings.create(**kwargs),
                 what=f"embeddings[{self.embedding_deployment}]",
             )
+            self._record_usage(self.embedding_deployment, getattr(result, "usage", None))
             ordered = sorted(result.data, key=lambda x: x.index)
             embeddings.extend([list(item.embedding) for item in ordered])
         return embeddings
+
+    def _record_usage(self, deployment: str, usage: Any) -> None:
+        """Accumulate token usage from a chat or embedding API response."""
+        if usage is None:
+            return
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+        self.usage.record(deployment, input_tokens=prompt_tokens, output_tokens=completion_tokens)
 
     @staticmethod
     def _parse_json(text: str) -> dict[str, Any]:

@@ -501,6 +501,18 @@ def decision_from_llm_result(
     valid_ids = {c["candidate_id"] for c in candidates_payload}
     selected = [sid for sid in selected if sid in valid_ids]
 
+    same_domain = result.get("same_functional_domain")
+    if isinstance(same_domain, str):
+        token = same_domain.strip().lower()
+        if token in {"true", "yes", "same", "same_domain"}:
+            same_domain = True
+        elif token in {"false", "no", "different", "different_domain"}:
+            same_domain = False
+        else:
+            same_domain = None
+    elif not isinstance(same_domain, bool):
+        same_domain = None
+
     base_kwargs = {
         "direction": direction,
         "source_id": source.atomic_id,
@@ -523,6 +535,7 @@ def decision_from_llm_result(
         "mapping_risk": str(result.get("mapping_risk") or ""),
         "scoring_rationale": str(result.get("scoring_rationale") or ""),
         "b_contribution": str(result.get("b_contribution") or ""),
+        "same_functional_domain": same_domain,
         **_source_parent_kwargs(source),
     }
 
@@ -737,6 +750,13 @@ def rescue_gap_decision(decision: MappingDecision, app_cfg: AppConfig | None, *,
     implementation_detail_gap, or indirect_support_gap.
     """
     if not app_cfg or not getattr(app_cfg, "enable_candidate_rescue", True):
+        return None
+    # Respect the judge's deliberate different-domain verdict. When the pairwise
+    # decomposition concluded the target is a genuinely different functional domain
+    # (same_functional_domain is False), this is a definitive true gap and must not
+    # be re-credited on retrieval similarity alone (thematic embeddings cannot
+    # distinguish e.g. integrity verification from general incident response).
+    if getattr(decision, "same_functional_domain", None) is False:
         return None
     if not decision.candidates:
         return None

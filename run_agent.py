@@ -34,6 +34,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from src.config import load_config, validate_config
+from src.cost import estimate_cost, format_cost_report
 from src.final_judge import run_final_judge
 from src.guideline_rag import GuidelineIndex
 from src.azure_openai_client import AzureOpenAIClient
@@ -220,6 +221,11 @@ def main() -> None:
         report_path = analyze_log_file(logger.jsonl_path, cfg.report_dir)
         _done("Writing log analysis report", t)
         logger.event("report.write", report=str(report_path))
+
+        # Estimate the total token cost of the run across every model called.
+        cost_rows, cost_total = estimate_cost(llm.usage)
+        print("\n" + format_cost_report(cost_rows, cost_total), flush=True)
+        logger.event("run.cost", total_usd=cost_total, by_model=cost_rows)
         logger.event("run.done", output=str(output_path), report=str(report_path))
 
         print(f"Output workbook: {output_path}")

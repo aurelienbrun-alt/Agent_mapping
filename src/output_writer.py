@@ -708,7 +708,20 @@ def _build_parent_rows(
         if total:
             _mean = sum(d.coverage_level for d in items) / total
             _max = max(d.coverage_level for d in items)
-            coverage = int(round(0.6 * _mean + 0.4 * _max))
+            strong = sum(1 for d in items if d.coverage_level >= 75)
+            # Lift toward the best atom only when AT LEAST TWO atoms are strongly
+            # covered. A single easy sub-obligation must not inflate a parent whose
+            # decisive obligations are weak; a lone strong atom keeps the plain mean.
+            coverage = int(round(0.6 * _mean + 0.4 * _max)) if strong >= 2 else int(round(_mean))
+            # Weakest-link guard: a parent cannot be rated above partial (resp.
+            # indirect) when a material share of its atomic obligations are genuinely
+            # uncovered (coverage < 40). This stops one covered sub-obligation from
+            # carrying a parent whose core obligations are true gaps.
+            uncovered_frac = sum(1 for d in items if d.coverage_level < 40) / total
+            if uncovered_frac >= 0.75:
+                coverage = min(coverage, 25)
+            elif uncovered_frac >= 0.5:
+                coverage = min(coverage, 50)
         else:
             coverage = 0
         items_for_targets = sorted(_select_items_for_target_listing(items), key=lambda d: d.coverage_level, reverse=True)
