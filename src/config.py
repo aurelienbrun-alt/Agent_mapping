@@ -32,6 +32,7 @@ class AppConfig:
     azure_openai_api_version: str
     azure_openai_text_deployment: str
     azure_openai_judge_deployment: str
+    # Final judge can use a stronger model than the pairwise match; empty falls back to the judge deployment.
     azure_openai_final_judge_deployment: str
     azure_openai_category_deployment: str
     azure_openai_embedding_deployment: str
@@ -199,13 +200,24 @@ def _path(root: Path, value: str) -> Path:
     return p if p.is_absolute() else root / p
 
 
-def load_config(env_path: str | Path = ".env") -> AppConfig:
+def load_config(env_path: str | Path = ".env", overrides: dict[str, str] | None = None) -> AppConfig:
+    """Build the application config.
+
+    `overrides` lets a caller (e.g. the web app) inject values without writing to
+    the `.env` file — used to pass per-request Azure credentials and the selected
+    source/target frameworks. Override values take precedence over `.env` / process
+    environment. Empty/None override values are ignored so they fall back to `.env`.
+    """
     root = project_root()
     env_file = _path(root, str(env_path))
-    # override=True makes the .env file authoritative: edits to .env always take
-    # effect, even if a stale variable with the same name lingers in the process
-    # environment (a common python-dotenv gotcha that silently ignores .env edits).
-    load_dotenv(env_file, override=True)
+    load_dotenv(env_file)
+
+    _overrides = {k: v for k, v in (overrides or {}).items() if v not in (None, "")}
+
+    def _env(name: str, default: str = "") -> str:  # shadows module-level _env, adds override support
+        if name in _overrides:
+            return str(_overrides[name])
+        return os.getenv(name, default)
 
     framework_a = FrameworkConfig(
         name=_env("FRAMEWORK_A_NAME", "FrameworkA"),
@@ -239,7 +251,6 @@ def load_config(env_path: str | Path = ".env") -> AppConfig:
         azure_openai_api_version=_env("AZURE_OPENAI_API_VERSION", "2024-02-01"),
         azure_openai_text_deployment=_env("AZURE_OPENAI_TEXT_DEPLOYMENT", "gpt-4.1-nano"),
         azure_openai_judge_deployment=_env("AZURE_OPENAI_JUDGE_DEPLOYMENT", _env("AZURE_OPENAI_TEXT_DEPLOYMENT", "gpt-4.1-nano")),
-        # Final judge can use a stronger model than the pairwise match; empty falls back to the judge deployment.
         azure_openai_final_judge_deployment=_env("AZURE_OPENAI_FINAL_JUDGE_DEPLOYMENT", ""),
         azure_openai_category_deployment=_env("AZURE_OPENAI_CATEGORY_DEPLOYMENT", _env("AZURE_OPENAI_TEXT_DEPLOYMENT", "gpt-4.1-nano")),
         azure_openai_embedding_deployment=_env("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small"),
