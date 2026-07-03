@@ -23,6 +23,6 @@ node_modules/
 logs/*.jsonl
 logs/*.log
 reports/*.md
-output/*.xlsx
+# output/*.xlsx are committed on purpose so the workbooks appear in the app on Render
 docs/cache/*
 !docs/cache/.gitkeep

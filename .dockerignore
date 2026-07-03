@@ -15,10 +15,10 @@
 webapp/frontend/node_modules/
 webapp/frontend/dist/
 
-# Runtime output / caches (regenerated at runtime)
+# Runtime caches / logs (regenerated at runtime). output/ is intentionally NOT
+# ignored: the committed workbooks are shipped so they show in the app on Render.
 docs/cache/
 logs/
-output/
 reports/
 # User-imported frameworks are runtime data (persist via a volume on /app/data/custom)
 data/custom/

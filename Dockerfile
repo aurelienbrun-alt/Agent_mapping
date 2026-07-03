@@ -38,6 +38,8 @@ COPY webapp/api/ ./webapp/api/
 COPY data/ ./data/
 COPY config/ ./config/
 COPY templates/ ./templates/
+# Pre-generated mapping workbooks — shipped so they appear in the app on Render
+COPY output/ ./output/
 # Sanitized .env template (prompts + deployments, no API key) and the built SPA.
 # The API key is supplied at runtime (entered in the app UI), not baked here.
 COPY .env.example ./.env
