@@ -45,7 +45,7 @@ _BUILTIN: list[FrameworkEntry] = [
     FrameworkEntry(
         id="france_2_3",
         name="France_2.5",
-        display_name="France ReCyf 2.5",
+        display_name="France ReCyF 2.5",
         country="France",
         file="data/France_ReCyf_2.5.xlsx",
         requirement_count=152,
