@@ -1,11 +1,15 @@
-# Keep the build context small. NOTE: .env is intentionally NOT ignored — the
-# build sanitizes it (drops the API key) in a discarded stage. data/, config/ and
-# templates/ Excel files ARE needed and must not be excluded.
+# Keep the build context small. The real .env (with the API key) is excluded so
+# the secret never enters the build; the image ships .env.example (sanitized
+# template) instead. data/, config/ and templates/ Excel files ARE needed.
 .git/
 .venv/
 **/__pycache__/
 **/*.pyc
 **/*.pyo
+
+# Secret local env — never send to the build context. .env.example IS shipped.
+.env
+.env.local
 
 # Frontend build artifacts (rebuilt inside the image)
 webapp/frontend/node_modules/

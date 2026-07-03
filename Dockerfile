@@ -5,9 +5,9 @@
 # Run:    docker run -p 8080:8080 nis2-mapper   ->  http://localhost:8080
 #
 # The Azure API key is entered in the app (stored in the browser) and sent per
-# request, so it is NOT baked into the image: stage `config` strips it from .env,
-# and only that sanitized .env reaches the final image (the intermediate stage,
-# which briefly holds the original, is discarded).
+# request, so it is NOT baked into the image: only .env.example (a sanitized
+# template with an empty AZURE_OPENAI_API_KEY) is committed and shipped. The real
+# .env with secrets is git-ignored and never enters the build context.
 
 # ---- Stage 1: build the React SPA ----
 FROM node:20-alpine AS frontend
@@ -18,13 +18,7 @@ COPY webapp/frontend/ ./
 RUN npm run build
 # -> /app/dist
 
-# ---- Stage 2: sanitize .env (drop the secret API key) ----
-FROM debian:bookworm-slim AS config
-WORKDIR /work
-COPY .env ./.env.full
-RUN sed -E 's/^AZURE_OPENAI_API_KEY=.*/AZURE_OPENAI_API_KEY=/' .env.full > .env
-
-# ---- Stage 3: Python runtime ----
+# ---- Stage 2: Python runtime ----
 FROM python:3.11-slim AS runtime
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
@@ -44,8 +38,9 @@ COPY webapp/api/ ./webapp/api/
 COPY data/ ./data/
 COPY config/ ./config/
 COPY templates/ ./templates/
-# Sanitized .env (prompts + deployments, no API key) and the built SPA
-COPY --from=config /work/.env ./.env
+# Sanitized .env template (prompts + deployments, no API key) and the built SPA.
+# The API key is supplied at runtime (entered in the app UI), not baked here.
+COPY .env.example ./.env
 COPY --from=frontend /app/dist ./webapp/frontend/dist
 
 # Writable runtime dirs (mount volumes here to persist cache/output across runs)
