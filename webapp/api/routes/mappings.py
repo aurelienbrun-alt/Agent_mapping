@@ -20,7 +20,7 @@ _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 @router.post("/mappings", response_model=StartOut)
 def start_mapping(body: MappingStartIn, creds: AzureCreds = Depends(get_creds)) -> StartOut:
     if not creds.is_set:
-        raise HTTPException(status_code=400, detail="Clé API Azure manquante. Configurez-la dans les paramètres.")
+        raise HTTPException(status_code=400, detail="Azure API key missing. Configure it in the settings.")
     try:
         source = get_framework(body.source_id)
         target = get_framework(body.target_id)
@@ -35,7 +35,7 @@ def start_mapping(body: MappingStartIn, creds: AzureCreds = Depends(get_creds)) 
 def mapping_status(job_id: str) -> JobOut:
     job = jobs.get(job_id)
     if job is None or job.kind != "mapping":
-        raise HTTPException(status_code=404, detail="Analyse introuvable.")
+        raise HTTPException(status_code=404, detail="Analysis not found.")
     result = None
     if job.status == "done" and job.result is not None:
         r = job.result
@@ -52,7 +52,7 @@ def mapping_status(job_id: str) -> JobOut:
 def mapping_download(job_id: str, fmt: str = "excel"):
     job = jobs.get(job_id)
     if job is None or job.kind != "mapping" or job.status != "done" or job.result is None:
-        raise HTTPException(status_code=404, detail="Résultat indisponible.")
+        raise HTTPException(status_code=404, detail="Result unavailable.")
     r = job.result
     if fmt == "pdf":
         pdf = generate_mapping_pdf(

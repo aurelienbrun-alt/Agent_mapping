@@ -70,6 +70,7 @@ class AzureOpenAIClient:
         embedding_dimensions: int = 0,
         final_judge_deployment: str = "",
         dry_run: bool = False,
+        timeout_seconds: float = 300.0,
     ) -> None:
         self.api_key = api_key
         self.endpoint = endpoint.rstrip("/") if endpoint else endpoint
@@ -99,7 +100,10 @@ class AzureOpenAIClient:
                 api_key=api_key,
                 azure_endpoint=self.endpoint,
                 api_version=api_version,
-                timeout=60.0,      # evite les workers bloques indefiniment
+                # 60s was tuned for nano and silently broke stronger models: gpt-5.4
+                # pairwise/final-judge calls exceed it, fall into the deterministic
+                # heuristic fallback, and bypass the judge entirely.
+                timeout=max(30.0, float(timeout_seconds or 300.0)),
                 max_retries=0,     # on gere le retry nous-memes (backoff + Retry-After)
             )
 

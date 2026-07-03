@@ -60,13 +60,13 @@ def _is_listable(path: Path) -> bool:
 def safe_output_path(name: str) -> Path:
     """Resolve `name` to a file inside the output dir, or raise. Blocks path traversal."""
     if not name or "/" in name or "\\" in name or name.startswith("."):
-        raise FileNotFoundError("Nom de fichier invalide.")
+        raise FileNotFoundError("Invalid file name.")
     base = output_dir().resolve()
     path = (base / name).resolve()
     if base not in path.parents:
-        raise FileNotFoundError("Chemin hors du dossier de sortie.")
+        raise FileNotFoundError("Path outside the output directory.")
     if not _is_listable(path):
-        raise FileNotFoundError("Fichier introuvable.")
+        raise FileNotFoundError("File not found.")
     return path
 
 

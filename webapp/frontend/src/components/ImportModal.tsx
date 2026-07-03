@@ -1,4 +1,5 @@
 import { useState } from 'react'
+
 import { importFramework } from '../api/client'
 
 export default function ImportModal({
@@ -16,21 +17,24 @@ export default function ImportModal({
 
   async function submit() {
     setError(null)
+
     if (!file) {
-      setError('Sélectionnez un fichier Excel (.xlsx).')
+      setError('Select an Excel file (.xlsx).')
       return
     }
+
     if (!name.trim()) {
-      setError('Le nom du framework est requis.')
+      setError('Framework name is required.')
       return
     }
+
     setBusy(true)
     try {
       await importFramework(file, { display_name: name.trim(), country: country.trim() })
       onImported()
       onClose()
     } catch (e: any) {
-      setError(e.message ?? "Échec de l'import")
+      setError(e.message ?? 'Import failed.')
     } finally {
       setBusy(false)
     }
@@ -38,49 +42,53 @@ export default function ImportModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="w-[480px] rounded-xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-bold text-[#451DC7]">Importer un framework</h2>
-        <div className="mt-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
-          <p className="font-medium text-gray-600">Colonnes requises dans votre fichier Excel :</p>
-          <ul className="mt-1 space-y-0.5">
-            <li><b>ID</b> — identifiant unique de l'exigence (ex. CYF-001)</li>
-            <li><b>Title</b> — intitulé du contrôle (ex. CyFun 2025)</li>
-            <li><b>Requirement</b> — texte détaillé de l'exigence</li>
-            <li><b>Category</b> — catégorie de l'exigence dans ce référentiel</li>
-          </ul>
-          <p className="mt-1 text-gray-400">La casse des en-têtes est ignorée.</p>
-        </div>
+      <div className="w-[560px] rounded-xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-lg font-bold text-[#451DC7]">Import a framework</h2>
+
+        <p className="mt-2 text-sm text-gray-600">Required columns in your Excel file:</p>
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-gray-600">
+          <li>
+            <strong>ID</strong> — unique requirement identifier, for example CYF-001
+          </li>
+          <li>
+            <strong>Title</strong> — control title, for example CyFun 2025
+          </li>
+          <li>
+            <strong>Requirement</strong> — detailed requirement text
+          </li>
+          <li>
+            <strong>Category</strong> — requirement category in this framework
+          </li>
+        </ul>
+        <p className="mt-2 text-xs text-gray-500">Header casing is ignored.</p>
 
         <div className="mt-4 flex flex-col gap-3">
+          <Field label="Framework name" value={name} onChange={setName} placeholder="CyFun 2025" />
+          <Field label="Country or scope" value={country} onChange={setCountry} placeholder="Belgium" />
+
           <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-gray-600">Fichier (.xlsx)</span>
+            <span className="text-xs font-medium text-gray-600">File (.xlsx)</span>
             <input
               type="file"
-              accept=".xlsx,.xlsm"
+              accept=".xlsx"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               className="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-1.5 file:text-indigo-700"
             />
           </label>
-          <Field label="Nom du framework" value={name} onChange={setName} placeholder="Ex. Allemagne BSI 2024" />
-          <Field label="Pays" value={country} onChange={setCountry} placeholder="Allemagne" />
         </div>
 
-        {error && (
-          <pre className="mt-3 whitespace-pre-wrap rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-            {error}
-          </pre>
-        )}
+        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100">
-            Annuler
+            Cancel
           </button>
           <button
             onClick={submit}
             disabled={busy}
             className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
-            {busy ? 'Import en cours…' : 'Importer'}
+            {busy ? 'Importing…' : 'Import'}
           </button>
         </div>
       </div>
@@ -103,7 +111,6 @@ function Field({
     <label className="flex flex-col gap-1">
       <span className="text-xs font-medium text-gray-600">{label}</span>
       <input
-        type="text"
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}

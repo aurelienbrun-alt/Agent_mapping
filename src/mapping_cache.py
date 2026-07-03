@@ -133,6 +133,15 @@ def build_mapping_cache_key(
             "cap75": app_cfg.object_action_cap_75_threshold,
             "cap25": app_cfg.object_action_cap_25_threshold,
         },
+        # The rescue is baked into the cached decision, so its policy must be part
+        # of the key: changing it invalidates affected entries and forces a fresh
+        # judgment instead of reusing a previously over-rescued coverage.
+        "rescue_min_action_object": getattr(app_cfg, "candidate_rescue_min_action_object_threshold", 0.45),
+        # v2: partial rescue capped at 40/50 (was 50/80).
+        "rescue_policy_version": 2,
+        # The score floor is also baked into the sanitized (cached) decision — it
+        # lifts a judge's low coverage upward and cannot be undone at read time.
+        "score_floor_enabled": getattr(app_cfg, "score_floor_enabled", True),
     }
     return stable_hash(payload)
 

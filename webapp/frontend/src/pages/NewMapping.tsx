@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
+
 import {
-  getFrameworks,
   deleteFramework,
-  startMapping,
+  getFrameworks,
   getMapping,
   mappingDownloadUrl,
+  startMapping,
   type Framework,
   type Job,
 } from '../api/client'
 import { FrameworkCard, ImportFrameworkCard } from '../components/FrameworkCard'
 import ImportModal from '../components/ImportModal'
-import { hasCreds } from '../lib/settings'
 import { useAppState } from '../lib/appState'
+import { hasCreds } from '../lib/settings'
 
 export default function NewMapping() {
   const [frameworks, setFrameworks] = useState<Framework[]>([])
@@ -23,16 +24,14 @@ export default function NewMapping() {
   const [error, setError] = useState<string | null>(null)
   const [entityTypes, setEntityTypes] = useState<string[]>(['essential', 'important'])
   const [importOpen, setImportOpen] = useState(false)
-  const { setLastMapping } = useAppState()
 
-  function toggleEntityType(t: string) {
-    setEntityTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]))
-  }
-  const navigate = useNavigate()
+  const { setLastMapping } = useAppState()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const loadFrameworks = useCallback(() => {
-    getFrameworks().then(setFrameworks).catch((e) => setError(e.message))
+    getFrameworks()
+      .then(setFrameworks)
+      .catch((e) => setError(e.message))
   }, [])
 
   useEffect(() => {
@@ -50,13 +49,17 @@ export default function NewMapping() {
 
   useEffect(() => {
     if (!jobId) return
+
     let stop = false
+
     async function poll() {
       while (!stop) {
         try {
           const j = await getMapping(jobId!)
           if (stop) return
+
           setJob(j)
+
           if (j.status !== 'running') {
             if (j.status === 'done' && j.result) {
               setLastMapping({
@@ -72,14 +75,21 @@ export default function NewMapping() {
           if (!stop) setError(e.message)
           return
         }
+
         await new Promise((r) => setTimeout(r, 1500))
       }
     }
+
     poll()
+
     return () => {
       stop = true
     }
-  }, [jobId])
+  }, [jobId, setLastMapping])
+
+  function toggleEntityType(t: string) {
+    setEntityTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]))
+  }
 
   async function handleDelete(id: string) {
     try {
@@ -94,11 +104,14 @@ export default function NewMapping() {
 
   async function run() {
     setError(null)
+
     if (!hasCreds()) {
-      setError('Configurez votre clé API Azure (bouton Paramètres) avant de lancer une analyse.')
+      setError('Configure your Azure API key in Azure OpenAI Configuration before running an analysis.')
       return
     }
+
     if (!source || !target) return
+
     try {
       const id = await startMapping(source, target, entityTypes)
       setJob({ id, kind: 'mapping', status: 'running', stage: '', error: '', result: null })
@@ -114,20 +127,21 @@ export default function NewMapping() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="text-2xl font-bold text-[#451DC7]">Sélectionnez vos frameworks cybersécurité</h2>
+      <h2 className="text-2xl font-bold text-[#451DC7]">Select your cybersecurity frameworks</h2>
 
       <Grid
-        title="📌 Framework SOURCE (Exigences à mapper)"
-        subtitle="Le référentiel dont vous voulez vérifier la couverture."
+        title="SOURCE framework (requirements to map)"
+        subtitle="The reference framework whose coverage you want to assess."
         frameworks={frameworks}
         selected={source}
         onSelect={setSource}
         onImport={() => setImportOpen(true)}
         onDelete={handleDelete}
       />
+
       <Grid
-        title="🎯 Framework CIBLE (Référence de conformité)"
-        subtitle="Le référentiel de comparaison."
+        title="TARGET framework (coverage reference)"
+        subtitle="The framework used as the comparison target."
         frameworks={frameworks}
         selected={target}
         onSelect={setTarget}
@@ -135,69 +149,57 @@ export default function NewMapping() {
         onDelete={handleDelete}
       />
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div>
-      )}
+      {error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
-      <hr className="my-2 border-gray-200" />
+      <hr />
 
-      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-        <h3 className="text-sm font-semibold text-[#451DC7]">Type d'entité concernée</h3>
-        <p className="mt-0.5 text-xs text-gray-500">
-          Certaines exigences NIS2 ne s'appliquent qu'aux entités essentielles ou importantes.
-        </p>
-        <div className="mt-3 flex gap-6">
-          <label className="flex cursor-pointer items-center gap-2">
+      <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="font-semibold text-gray-900">Applicable entity type</h3>
+        <p className="mt-1 text-sm text-gray-500">Some requirements only apply to essential or important entities.</p>
+
+        <div className="mt-3 flex gap-4 text-sm text-gray-700">
+          <label className="flex items-center gap-2">
             <input
               type="checkbox"
               checked={entityTypes.includes('essential')}
               onChange={() => toggleEntityType('essential')}
               className="accent-indigo-600"
             />
-            <span className="text-sm font-medium text-gray-700">Entité Essentielle</span>
+            Essential entity
           </label>
-          <label className="flex cursor-pointer items-center gap-2">
+          <label className="flex items-center gap-2">
             <input
               type="checkbox"
               checked={entityTypes.includes('important')}
               onChange={() => toggleEntityType('important')}
               className="accent-indigo-600"
             />
-            <span className="text-sm font-medium text-gray-700">Entité Importante</span>
+            Important entity
           </label>
         </div>
-        {entityTypes.length === 0 && (
-          <p className="mt-2 text-xs text-red-500">Sélectionnez au moins un type d'entité.</p>
-        )}
-      </div>
+
+        {entityTypes.length === 0 && <p className="mt-2 text-sm text-red-600">Select at least one entity type.</p>}
+      </section>
 
       {running ? (
-        <div className="flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">
+        <div className="flex items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-indigo-700">
           <Spinner />
-          <span className="text-[#451DC7]">{job?.stage || 'Analyse en cours…'}</span>
+          <span>{job?.stage || 'Analysis in progress…'}</span>
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
-          <div>
-            <button
-              onClick={run}
-              disabled={!ready}
-              className="rounded-lg bg-indigo-600 px-5 py-2.5 font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              ▶ Lancer l'analyse
-            </button>
-            {!source || !target ? (
-              <p className="mt-1 text-xs text-gray-400">
-                Sélectionnez un framework source et un framework cible.
-              </p>
-            ) : null}
-          </div>
-
-          {result && jobId && (
-            <ResultCard result={result} jobId={jobId} onBuildBaseline={() => navigate('/baseline')} />
-          )}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={run}
+            disabled={!ready}
+            className="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            ▶ Run analysis
+          </button>
+          {!source || !target ? <p className="text-sm text-gray-500">Select a source framework and a target framework.</p> : null}
         </div>
       )}
+
+      {result && jobId && <ResultCard result={result} jobId={jobId} />}
 
       {importOpen && <ImportModal onClose={() => setImportOpen(false)} onImported={loadFrameworks} />}
     </div>
@@ -222,76 +224,69 @@ function Grid({
   onDelete: (id: string) => void
 }) {
   return (
-    <div>
-      <h3 className="mt-2 text-lg font-semibold text-[#451DC7]">{title}</h3>
-      <p className="text-xs text-gray-500">{subtitle}</p>
-      <div className="mt-3 flex flex-wrap gap-4">
+    <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <h3 className="font-semibold text-gray-900">{title}</h3>
+      <p className="mt-1 text-sm text-gray-500">{subtitle}</p>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {frameworks.map((fw) => (
           <FrameworkCard
             key={fw.id}
             fw={fw}
-            selected={fw.id === selected}
+            selected={selected === fw.id}
             onClick={() => onSelect(fw.id)}
             onDelete={fw.custom ? () => onDelete(fw.id) : undefined}
           />
         ))}
         <ImportFrameworkCard onClick={onImport} />
       </div>
-    </div>
+    </section>
   )
 }
 
-function ResultCard({
-  result,
-  jobId,
-  onBuildBaseline,
-}: {
-  result: any
-  jobId: string
-  onBuildBaseline: () => void
-}) {
+function ResultCard({ result, jobId }: { result: any; jobId: string }) {
   const s = result.summary || {}
+
   return (
-    <div className="rounded-xl border border-green-200 bg-green-50 p-5">
-      <h3 className="text-lg font-bold text-green-700">✅ Analyse terminée</h3>
-      <div className="mt-2 flex gap-8">
-        <Kpi label="Couverture moyenne" value={`${s.average_coverage ?? 0}%`} />
-        <Kpi label="Décisions analysées" value={s.atomic_decisions ?? 0} />
-        <Kpi label="Écarts" value={s.gaps ?? 0} />
+    <section className="rounded-xl border border-green-200 bg-green-50 p-4 shadow-sm">
+      <h3 className="font-semibold text-green-800">✅ Analysis completed</h3>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Kpi label="Source requirements" value={s.source_requirements ?? s.source_total ?? '-'} />
+        <Kpi label="Target requirements" value={s.target_requirements ?? s.target_total ?? '-'} />
+        <Kpi label="Mapped items" value={s.mapped ?? s.mapped_items ?? '-'} />
+        <Kpi label="Coverage" value={s.coverage_percent != null ? `${s.coverage_percent}%` : '-'} />
       </div>
+
       <div className="mt-4 flex flex-wrap gap-2">
         <a
           href={mappingDownloadUrl(jobId, 'excel')}
           className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
         >
-          ⬇ Télécharger Excel
+          ⬇ Download Excel
         </a>
         <a
           href={mappingDownloadUrl(jobId, 'pdf')}
-          className="rounded-lg border border-indigo-500 px-4 py-2 text-sm text-indigo-600 hover:bg-indigo-50"
+          className="rounded-lg border border-indigo-500 px-4 py-2 text-sm font-medium text-indigo-600 hover:bg-indigo-50"
         >
-          ⬇ Télécharger PDF
+          ⬇ Download PDF
         </a>
-        <button
-          onClick={onBuildBaseline}
-          className="rounded-lg px-4 py-2 text-sm font-medium text-indigo-600 hover:bg-indigo-100"
-        >
-          → Construire la baseline
-        </button>
       </div>
-    </div>
+    </section>
   )
 }
 
 function Kpi({ label, value }: { label: string; value: string | number }) {
   return (
-    <div>
-      <div className="text-2xl font-bold text-[#451DC7]">{value}</div>
+    <div className="rounded-lg bg-white p-3 text-center shadow-sm">
+      <div className="text-lg font-bold text-[#451DC7]">{value}</div>
       <div className="text-xs text-gray-500">{label}</div>
     </div>
   )
 }
 
 export function Spinner() {
-  return <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-300 border-t-indigo-600" />
+  return (
+    <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-indigo-300 border-t-indigo-700" />
+  )
 }

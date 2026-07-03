@@ -88,6 +88,7 @@ def main() -> None:
             embedding_deployment=cfg.azure_openai_embedding_deployment,
             temperature=cfg.azure_openai_temperature,
             embedding_dimensions=cfg.azure_openai_embedding_dimensions,
+            timeout_seconds=cfg.azure_openai_timeout_seconds,
             dry_run=cfg.dry_run_without_llm,
         )
         logger.event(

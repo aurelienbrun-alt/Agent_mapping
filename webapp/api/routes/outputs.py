@@ -23,7 +23,7 @@ def view_output(name: str) -> dict:
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
     except Exception as exc:  # noqa: BLE001 - surface a clean message to the UI
-        raise HTTPException(status_code=400, detail=f"Lecture du classeur impossible : {exc}") from None
+        raise HTTPException(status_code=400, detail=f"Cannot read the workbook: {exc}") from None
 
 
 @router.get("/outputs/{name}/download")

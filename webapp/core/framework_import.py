@@ -19,10 +19,10 @@ from .catalog import FrameworkEntry, custom_dir, list_frameworks, register_custo
 REQUIRED_COLUMNS = ["ID", "Title", "Requirement", "Category"]
 
 _COLUMN_DESCRIPTIONS: dict[str, str] = {
-    "ID":          "identifiant unique de l'exigence (ex. « CYF-001 »)",
-    "Title":       "intitulé du contrôle dans le référentiel (ex. « CyFun 2025 »)",
-    "Requirement": "texte détaillé de l'exigence",
-    "Category":    "catégorie de l'exigence dans ce référentiel",
+    "ID":          "unique requirement identifier (e.g. \"CYF-001\")",
+    "Title":       "control title in the framework (e.g. \"CyFun 2025\")",
+    "Requirement": "full requirement text",
+    "Category":    "requirement category within this framework",
 }
 
 
@@ -47,31 +47,31 @@ def _detect_columns(columns: list[str]) -> tuple[dict[str, str], list[str]]:
 def add_custom_framework(*, raw: bytes, display_name: str, country: str) -> FrameworkEntry:
     display_name = (display_name or "").strip()
     if not display_name:
-        raise ValueError("Le nom du framework est requis.")
+        raise ValueError("The framework name is required.")
 
     # Validate the workbook in memory before writing anything to disk.
     try:
         df = pd.read_excel(io.BytesIO(raw), sheet_name=0, dtype=str)
     except Exception as exc:  # noqa: BLE001
-        raise ValueError(f"Fichier Excel illisible : {exc}") from None
+        raise ValueError(f"Unreadable Excel file: {exc}") from None
 
     mapping, missing = _detect_columns(list(df.columns))
     if missing:
         col_list = "\n".join(
             f"  • {col} — {_COLUMN_DESCRIPTIONS[col]}" for col in REQUIRED_COLUMNS
         )
-        found = ", ".join(str(c) for c in df.columns) or "(aucune)"
+        found = ", ".join(str(c) for c in df.columns) or "(none)"
         raise ValueError(
-            f"Colonnes manquantes : {', '.join(missing)}\n\n"
-            f"Votre fichier doit contenir ces 4 colonnes (la casse est ignorée) :\n"
+            f"Missing columns: {', '.join(missing)}\n\n"
+            f"Your file must contain these 4 columns (case-insensitive):\n"
             f"{col_list}\n\n"
-            f"Colonnes trouvées dans votre fichier : {found}"
+            f"Columns found in your file: {found}"
         )
 
     req_col = mapping["Requirement"]
     count = int(df[req_col].fillna("").astype(str).str.strip().ne("").sum())
     if count == 0:
-        raise ValueError("Aucune exigence trouvée dans la colonne Requirement.")
+        raise ValueError("No requirement found in the Requirement column.")
 
     # Allocate unique id + filename.
     slug = safe_filename(display_name) or "framework"
@@ -98,7 +98,7 @@ def add_custom_framework(*, raw: bytes, display_name: str, country: str) -> Fram
         country=(country or "").strip() or "—",
         file=str(file_path.relative_to(project_root())).replace("\\", "/"),
         requirement_count=count,
-        description="Framework importé",
+        description="Imported framework",
         sheet_name="",
         id_column=mapping["ID"],
         title_column=mapping["Title"],

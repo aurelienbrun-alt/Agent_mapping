@@ -35,10 +35,10 @@ async def import_framework(
 ) -> FrameworkOut:
     raw = await file.read()
     if not raw:
-        raise HTTPException(status_code=400, detail="Fichier vide.")
+        raise HTTPException(status_code=400, detail="Empty file.")
     name = (file.filename or "").lower()
     if not name.endswith((".xlsx", ".xlsm")):
-        raise HTTPException(status_code=400, detail="Format non supporté : fournissez un fichier .xlsx.")
+        raise HTTPException(status_code=400, detail="Unsupported format: provide an .xlsx file.")
     try:
         entry = add_custom_framework(raw=raw, display_name=display_name, country=country)
     except ValueError as exc:
@@ -51,8 +51,8 @@ def delete_framework(framework_id: str) -> dict[str, str]:
     try:
         entry = catalog.get_framework(framework_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Framework introuvable.") from None
+        raise HTTPException(status_code=404, detail="Framework not found.") from None
     if not entry.custom:
-        raise HTTPException(status_code=400, detail="Les frameworks intégrés ne peuvent pas être supprimés.")
+        raise HTTPException(status_code=400, detail="Built-in frameworks cannot be deleted.")
     catalog.remove_custom_framework(framework_id)
     return {"deleted": framework_id}

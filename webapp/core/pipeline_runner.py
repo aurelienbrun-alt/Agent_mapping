@@ -110,7 +110,7 @@ def run_mapping(cfg: AppConfig, *, entity_types: list[str] | None = None, progre
     logger.event("run.start", framework_a=a_name, framework_b=b_name, source="webapp")
     llm = _make_llm(cfg)
 
-    progress("Préparation des frameworks (atomisation, catégories, embeddings)…")
+    progress("Preparing frameworks (atomization, categories, embeddings)…")
     atoms_a = process_framework(cfg.framework_a, cfg, llm, logger)
     atoms_b = process_framework(cfg.framework_b, cfg, llm, logger)
     validate_non_empty_framework(a_name, atoms_a)
@@ -128,7 +128,7 @@ def run_mapping(cfg: AppConfig, *, entity_types: list[str] | None = None, progre
             atoms_b, atoms_a, direction=f"{b_name}->{a_name}", target_framework=a_name, cfg=cfg, llm=llm, logger=logger
         )
 
-    progress("Génération du classeur Excel…")
+    progress("Generating the Excel workbook…")
     output_path = write_mapping_workbook(cfg, a_to_b, b_to_a, run_id)
     logger.event("run.done", output=str(output_path))
 

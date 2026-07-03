@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from typing import Any
 
@@ -109,9 +110,20 @@ def process_framework(framework_cfg: FrameworkConfig, app_cfg: AppConfig, llm: A
         logger.event("cache.load.atomized", framework=framework_cfg.name, count=len(atoms), cache_dir=str(cdir))
     else:
         atoms = []
-        for row in tqdm(rows, desc=f"Atomize/extract {framework_cfg.name}"):
-            row_atoms = atomize_row(row, app_cfg, llm)
-            atoms.extend(row_atoms)
+        max_workers = max(1, int(getattr(app_cfg, "max_concurrent_llm_calls", 1) or 1))
+        if max_workers <= 1 or len(rows) <= 1:
+            for row in tqdm(rows, desc=f"Atomize {framework_cfg.name}"):
+                atoms.extend(atomize_row(row, app_cfg, llm))
+        else:
+            # Atomization is independent per row; parallelize the LLM calls but
+            # reassemble in the original row order for stable atomic IDs.
+            results = [None] * len(rows)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(atomize_row, row, app_cfg, llm): i for i, row in enumerate(rows)}
+                for future in tqdm(as_completed(futures), total=len(futures), desc=f"Atomize {framework_cfg.name}"):
+                    results[futures[future]] = future.result()
+            for row_atoms in results:
+                atoms.extend(row_atoms or [])
         save_atomized_cache(framework_cfg, app_cfg, atoms)
         logger.event("cache.save.atomized", framework=framework_cfg.name, count=len(atoms), cache_dir=str(cdir))
 
@@ -123,15 +135,31 @@ def process_framework(framework_cfg: FrameworkConfig, app_cfg: AppConfig, llm: A
         logger.event("cache.load.fields", framework=framework_cfg.name, count=len(atoms), cache_dir=str(cdir))
 
     checkpoint_every = 10
-    for idx, atom in enumerate(tqdm(atoms, desc=f"Fields {framework_cfg.name}"), start=1):
-        if _has_fields(atom):
-            continue
-        atom.fields = extract_fields(atom, app_cfg, llm)
-        kws = atom.fields.get("keywords") if isinstance(atom.fields, dict) else None
-        atom.keywords = _clean_keywords(kws) or tokenize(atom.atomic_requirement)
-        if idx % checkpoint_every == 0:
-            save_fields_cache(framework_cfg, app_cfg, atoms)
-            logger.event("cache.checkpoint.fields", framework=framework_cfg.name, processed=idx, total=len(atoms))
+    todo = [atom for atom in atoms if not _has_fields(atom)]
+    if todo:
+        max_workers = max(1, int(getattr(app_cfg, "max_concurrent_llm_calls", 1) or 1))
+
+        def _assign(atom: AtomicRequirement, fields: dict, done: int) -> None:
+            # Runs on the main thread only: mutating atoms and writing the cache
+            # file must not race with concurrent workers.
+            atom.fields = fields
+            kws = fields.get("keywords") if isinstance(fields, dict) else None
+            atom.keywords = _clean_keywords(kws) or tokenize(atom.atomic_requirement)
+            if done % checkpoint_every == 0:
+                save_fields_cache(framework_cfg, app_cfg, atoms)
+                logger.event("cache.checkpoint.fields", framework=framework_cfg.name, processed=done, total=len(todo))
+
+        if max_workers <= 1:
+            for done, atom in enumerate(tqdm(todo, desc=f"Fields {framework_cfg.name}"), start=1):
+                _assign(atom, extract_fields(atom, app_cfg, llm), done)
+        else:
+            # extract_fields is a pure LLM call returning a dict; parallelize it and
+            # assign the results back on the main thread.
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(extract_fields, atom, app_cfg, llm): atom for atom in todo}
+                for done, future in enumerate(tqdm(as_completed(futures), total=len(futures), desc=f"Fields {framework_cfg.name}"), start=1):
+                    _assign(futures[future], future.result(), done)
+        save_fields_cache(framework_cfg, app_cfg, atoms)
     # Refine categories at atomic level after fields are extracted. This preserves
     # atomization and fields and makes category errors non-blocking downstream.
     atoms = repair_atoms_categories(atoms, framework_cfg, app_cfg, llm, logger, save_cache=False)

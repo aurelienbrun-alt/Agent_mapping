@@ -54,17 +54,17 @@ def build_baseline(
     cfg = mapping.cfg
     selected_keys = {category_match_key(c) for c in selected_categories if c}
 
-    progress("Filtrage des décisions par catégorie ENISA…")
+    progress("Filtering decisions by ENISA category…")
     a_to_b = _filter_by_categories(mapping.a_to_b, selected_keys)
     b_to_a = _filter_by_categories(mapping.b_to_a, selected_keys) if mapping.b_to_a is not None else None
 
     logger = JsonlRunLogger(cfg.log_dir, f"{mapping.run_id}_baseline")
     llm = _make_llm(cfg)
 
-    progress("Consolidation des points de contrôle…")
+    progress("Consolidating control points…")
     items = run_consolidated_framework(a_to_b, b_to_a, cfg, llm, logger)
 
-    progress("Génération du classeur baseline…")
+    progress("Generating the baseline workbook…")
     output_path = write_consolidated_workbook(cfg, items, mapping.run_id)
     logger.event("baseline.done", output=str(output_path), items=len(items))
 

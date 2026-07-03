@@ -16,9 +16,9 @@ _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 def start_baseline(body: BaselineStartIn) -> StartOut:
     mapping_job = jobs.get(body.mapping_job_id)
     if mapping_job is None or mapping_job.kind != "mapping" or mapping_job.status != "done" or mapping_job.result is None:
-        raise HTTPException(status_code=400, detail="Mapping non disponible. Lancez d'abord une analyse.")
+        raise HTTPException(status_code=400, detail="No mapping available. Run an analysis first.")
     if not body.categories:
-        raise HTTPException(status_code=400, detail="Sélectionnez au moins une catégorie ENISA.")
+        raise HTTPException(status_code=400, detail="Select at least one ENISA category.")
     job = jobs.submit("baseline", build_baseline, mapping_job.result, body.categories)
     return StartOut(job_id=job.id)
 
@@ -27,7 +27,7 @@ def start_baseline(body: BaselineStartIn) -> StartOut:
 def baseline_status(job_id: str) -> JobOut:
     job = jobs.get(job_id)
     if job is None or job.kind != "baseline":
-        raise HTTPException(status_code=404, detail="Baseline introuvable.")
+        raise HTTPException(status_code=404, detail="Baseline not found.")
     result = None
     if job.status == "done" and job.result is not None:
         result = {"summary": job.result.summary, "selected_categories": job.result.selected_categories}
@@ -38,6 +38,6 @@ def baseline_status(job_id: str) -> JobOut:
 def baseline_download(job_id: str):
     job = jobs.get(job_id)
     if job is None or job.kind != "baseline" or job.status != "done" or job.result is None:
-        raise HTTPException(status_code=404, detail="Résultat indisponible.")
+        raise HTTPException(status_code=404, detail="Result unavailable.")
     path = job.result.output_path
     return FileResponse(path, filename=path.name, media_type=_XLSX)

@@ -45,7 +45,7 @@ def test_connection(creds: AzureCreds) -> tuple[bool, str]:
     from src.azure_openai_client import AzureOpenAIClient
 
     if not creds.is_set:
-        return False, "Clé API manquante."
+        return False, "API key missing."
     try:
         cfg = load_config(overrides=creds.as_overrides())
         llm = AzureOpenAIClient(
@@ -61,8 +61,8 @@ def test_connection(creds: AzureCreds) -> tuple[bool, str]:
         )
         vectors = llm.embed_texts(["ping"])
         if vectors and vectors[0]:
-            return True, "Connexion réussie à Azure OpenAI."
-        return False, "Réponse vide d'Azure OpenAI."
+            return True, "Successfully connected to Azure OpenAI."
+        return False, "Empty response from Azure OpenAI."
     except Exception as exc:  # noqa: BLE001 - surface any provider/SDK error to the user
         return False, _friendly_error(str(exc))
 
@@ -70,9 +70,9 @@ def test_connection(creds: AzureCreds) -> tuple[bool, str]:
 def _friendly_error(raw: str) -> str:
     low = raw.lower()
     if "401" in raw or "unauthorized" in low or "access denied" in low:
-        return "Échec d'authentification : clé API invalide ou non autorisée."
+        return "Authentication failed: invalid or unauthorized API key."
     if "404" in raw or "not found" in low or "deploymentnotfound" in low:
-        return "Ressource introuvable : vérifiez l'endpoint et le nom de déploiement."
+        return "Resource not found: check the endpoint and deployment name."
     if "getaddrinfo" in low or "connection" in low or "timed out" in low:
-        return "Connexion impossible : vérifiez l'endpoint Azure et le réseau."
-    return f"Échec de la connexion : {raw}"
+        return "Cannot connect: check the Azure endpoint and network."
+    return f"Connection failed: {raw}"

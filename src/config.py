@@ -38,6 +38,7 @@ class AppConfig:
     azure_openai_embedding_deployment: str
     azure_openai_temperature: float
     azure_openai_embedding_dimensions: int
+    azure_openai_timeout_seconds: float
     dry_run_without_llm: bool
 
     framework_a: FrameworkConfig
@@ -76,6 +77,7 @@ class AppConfig:
     final_judge_only_ambiguous: bool
     final_judge_confidence_threshold: float
     final_judge_batch_size: int
+    final_judge_max_concurrent_calls: int
     enable_parent_gap_llm_synthesis: bool
     parent_gap_synthesis_only_for_non_full_coverage: bool
     parent_gap_synthesis_max_concurrent_calls: int
@@ -111,6 +113,9 @@ class AppConfig:
     object_action_cap_75_threshold: float
     object_action_cap_25_threshold: float
     enable_global_fallback: bool
+    affinity_injection_enabled: bool
+    affinity_injection_count: int
+    family_affinity_file: str
     global_fallback_top_k: int
     use_llm_pairwise_evaluation: bool
     llm_self_review: bool
@@ -131,6 +136,7 @@ class AppConfig:
     candidate_rescue_implementation_combined_threshold: float
     candidate_rescue_indirect_combined_threshold: float
     candidate_rescue_indirect_semantic_threshold: float
+    candidate_rescue_min_action_object_threshold: float
     strong_candidate_upgrade_enabled: bool
     strong_candidate_upgrade_combined_threshold: float
     strong_candidate_upgrade_semantic_threshold: float
@@ -256,6 +262,7 @@ def load_config(env_path: str | Path = ".env", overrides: dict[str, str] | None 
         azure_openai_embedding_deployment=_env("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small"),
         azure_openai_temperature=as_float(_env("AZURE_OPENAI_TEMPERATURE"), 0.1),
         azure_openai_embedding_dimensions=as_int(_env("AZURE_OPENAI_EMBEDDING_DIMENSIONS"), 512),
+        azure_openai_timeout_seconds=as_float(_env("AZURE_OPENAI_TIMEOUT_SECONDS"), 300.0),
         dry_run_without_llm=as_bool(_env("DRY_RUN_WITHOUT_LLM", "false"), False),
         framework_a=framework_a,
         framework_b=framework_b,
@@ -287,6 +294,7 @@ def load_config(env_path: str | Path = ".env", overrides: dict[str, str] | None 
         final_judge_only_ambiguous=as_bool(_env("FINAL_JUDGE_ONLY_AMBIGUOUS"), True),
         final_judge_confidence_threshold=as_float(_env("FINAL_JUDGE_CONFIDENCE_THRESHOLD"), 0.80),
         final_judge_batch_size=as_int(_env("FINAL_JUDGE_BATCH_SIZE"), 25),
+        final_judge_max_concurrent_calls=as_int(_env("FINAL_JUDGE_MAX_CONCURRENT_CALLS"), 0),
         enable_parent_gap_llm_synthesis=as_bool(_env("ENABLE_PARENT_GAP_LLM_SYNTHESIS"), False),
         parent_gap_synthesis_only_for_non_full_coverage=as_bool(_env("PARENT_GAP_SYNTHESIS_ONLY_FOR_NON_FULL_COVERAGE"), True),
         parent_gap_synthesis_max_concurrent_calls=as_int(_env("PARENT_GAP_SYNTHESIS_MAX_CONCURRENT_CALLS"), 0),
@@ -320,6 +328,9 @@ def load_config(env_path: str | Path = ".env", overrides: dict[str, str] | None 
         object_action_cap_75_threshold=as_float(_env("OBJECT_ACTION_CAP_75_THRESHOLD"), 0.25),
         object_action_cap_25_threshold=as_float(_env("OBJECT_ACTION_CAP_25_THRESHOLD"), 0.10),
         enable_global_fallback=as_bool(_env("ENABLE_GLOBAL_FALLBACK"), True),
+        affinity_injection_enabled=as_bool(_env("AFFINITY_INJECTION_ENABLED"), True),
+        affinity_injection_count=as_int(_env("AFFINITY_INJECTION_COUNT"), 4),
+        family_affinity_file=_env("FAMILY_AFFINITY_FILE") or "",
         global_fallback_top_k=as_int(_env("GLOBAL_FALLBACK_TOP_K"), 8),
         use_llm_pairwise_evaluation=as_bool(_env("USE_LLM_PAIRWISE_EVALUATION"), True),
         llm_self_review=as_bool(_env("LLM_SELF_REVIEW"), False),
@@ -340,6 +351,7 @@ def load_config(env_path: str | Path = ".env", overrides: dict[str, str] | None 
         candidate_rescue_implementation_combined_threshold=as_float(_env("CANDIDATE_RESCUE_IMPLEMENTATION_COMBINED_THRESHOLD"), 0.45),
         candidate_rescue_indirect_combined_threshold=as_float(_env("CANDIDATE_RESCUE_INDIRECT_COMBINED_THRESHOLD"), 0.35),
         candidate_rescue_indirect_semantic_threshold=as_float(_env("CANDIDATE_RESCUE_INDIRECT_SEMANTIC_THRESHOLD"), 0.48),
+        candidate_rescue_min_action_object_threshold=as_float(_env("CANDIDATE_RESCUE_MIN_ACTION_OBJECT_THRESHOLD"), 0.45),
         strong_candidate_upgrade_enabled=as_bool(_env("STRONG_CANDIDATE_UPGRADE_ENABLED"), True),
         strong_candidate_upgrade_combined_threshold=as_float(_env("STRONG_CANDIDATE_UPGRADE_COMBINED_THRESHOLD"), 0.58),
         strong_candidate_upgrade_semantic_threshold=as_float(_env("STRONG_CANDIDATE_UPGRADE_SEMANTIC_THRESHOLD"), 0.76),

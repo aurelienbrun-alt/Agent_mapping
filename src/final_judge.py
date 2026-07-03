@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
 from .config import AppConfig
@@ -114,7 +115,14 @@ def run_final_judge(decisions: list[MappingDecision], app_cfg: AppConfig, llm: A
 
     if review_batches:
         print(f"[3/6] Final judge: reviewing {total_to_review} decision(s) in {len(review_batches)} batch(es)...")
-    for category, batch_no, batch in tqdm(review_batches, desc="Final judge", unit="batch"):
+
+    # Each batch is an independent LLM call, so run them in parallel. Only the LLM
+    # request happens on worker threads; corrections mutate the shared `decisions`
+    # list and are therefore applied sequentially on the main thread below.
+    max_workers = max(1, int(getattr(app_cfg, "final_judge_max_concurrent_calls", 0) or app_cfg.max_concurrent_llm_calls or 1))
+
+    def _review(item: tuple[str, int, list[MappingDecision]]) -> tuple[str, int, list, str, Exception | None]:
+        category, batch_no, batch = item
         payload = [_judge_payload(d) for d in batch]
         prompt = render_prompt(
             app_cfg.prompt_final_judge,
@@ -124,18 +132,34 @@ def run_final_judge(decisions: list[MappingDecision], app_cfg: AppConfig, llm: A
         )
         try:
             result = llm.final_judge_json(prompt)
-            summary = str(result.get("summary") or "")
-            corrections = result.get("corrections") or []
-            for corr in corrections:
-                if not isinstance(corr, dict):
-                    continue
-                source_id = str(corr.get("source_id") or corr.get("id") or "")
-                if source_id:
-                    notes_by_source[source_id] = json.dumps(corr, ensure_ascii=False)
-                    _apply_correction(source_id, corr, decisions, app_cfg)
-            logger.event("final_judge.category_batch", category=category, batch=batch_no, items=len(batch), corrections=len(corrections), summary=summary)
-        except Exception as exc:
-            logger.error("final_judge.category_batch", exc, category=category, batch=batch_no, items=len(batch))
+            return category, batch_no, (result.get("corrections") or []), str(result.get("summary") or ""), None
+        except Exception as exc:  # surfaced on the main thread below
+            return category, batch_no, [], "", exc
+
+    def _handle(category: str, batch_no: int, batch_len: int, corrections: list, summary: str, exc: Exception | None) -> None:
+        if exc is not None:
+            logger.error("final_judge.category_batch", exc, category=category, batch=batch_no, items=batch_len)
+            return
+        for corr in corrections:
+            if not isinstance(corr, dict):
+                continue
+            source_id = str(corr.get("source_id") or corr.get("id") or "")
+            if source_id:
+                notes_by_source[source_id] = json.dumps(corr, ensure_ascii=False)
+                _apply_correction(source_id, corr, decisions, app_cfg)
+        logger.event("final_judge.category_batch", category=category, batch=batch_no, items=batch_len, corrections=len(corrections), summary=summary)
+
+    batch_len_by_key = {(c, n): len(b) for c, n, b in review_batches}
+    if max_workers <= 1:
+        for item in tqdm(review_batches, desc="Final judge", unit="batch"):
+            category, batch_no, corrections, summary, exc = _review(item)
+            _handle(category, batch_no, batch_len_by_key[(category, batch_no)], corrections, summary, exc)
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_review, item) for item in review_batches]
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Final judge", unit="batch"):
+                category, batch_no, corrections, summary, exc = future.result()
+                _handle(category, batch_no, batch_len_by_key[(category, batch_no)], corrections, summary, exc)
 
     for d in decisions:
         if d.source_id in notes_by_source:

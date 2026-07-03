@@ -15,6 +15,7 @@ from .logging_utils import JsonlRunLogger
 from .models import AtomicRequirement, CandidateScore, MappingDecision
 from .utils import normalize_category, tokenize, render_prompt, resolve_language_name
 from .mapping_cache import MappingDecisionCache, build_mapping_cache_key
+from .family_affinity import inject_affinity_candidates, load_affinity_table
 
 
 SUPPORTED_MATCH_SCOPES = {"same_enisa_category", "same_category", "soft_enisa", "soft_enisa_category", "all"}
@@ -46,6 +47,7 @@ def run_directional_mapping(
 
     target_by_id = {a.atomic_id: a for a in target_atoms}
     indexes = build_target_indexes(target_atoms, app_cfg)
+    affinity_table = load_affinity_table(app_cfg) if getattr(app_cfg, "affinity_injection_enabled", False) else {}
     cache = MappingDecisionCache(
         app_cfg.docs_cache_dir / app_cfg.mapping_decision_cache_file,
         enabled=app_cfg.enable_mapping_decision_cache and not app_cfg.dry_run_without_llm,
@@ -89,6 +91,15 @@ def run_directional_mapping(
         # candidates than top_k_candidates when llm_top_k_candidates > top_k_candidates.
         llm_limit = app_cfg.llm_top_k_candidates if app_cfg.llm_top_k_candidates and app_cfg.llm_top_k_candidates > 0 else app_cfg.top_k_candidates
         llm_candidate_scores = candidate_scores[:llm_limit]
+        # Recall injection (union, never a filter): add category/family-affine
+        # candidates the embedding cut missed. Preserves the top-K exactly, so it
+        # can never lose an already-retrieved candidate.
+        if getattr(app_cfg, "affinity_injection_enabled", False):
+            llm_candidate_scores, n_injected = inject_affinity_candidates(
+                source, llm_candidate_scores, candidate_scores, target_by_id,
+                app_cfg, affinity_table, getattr(app_cfg, "affinity_injection_count", 4),
+            )
+            log_data["affinity_injected"] = n_injected
         # Scoring pool (stats, cache key) stays bounded by top_k_candidates.
         candidate_scores = candidate_scores[: app_cfg.top_k_candidates]
         best = candidate_scores[0] if candidate_scores else None
@@ -129,7 +140,11 @@ def run_directional_mapping(
         if guideline_index is not None and guideline_index.loaded and getattr(source, "embedding", None):
             guideline_passages = guideline_index.retrieve(source.embedding, top_k=app_cfg.guideline_top_k)
         decision = evaluate_candidates_with_repeat(source, llm_candidate_scores, target_by_id, direction, app_cfg, llm, scope_used, guideline_passages=guideline_passages)
-        cache.set(cache_key, decision)
+        # Never cache a failure fallback: it is a degraded score-only decision
+        # produced when the LLM call errored (e.g. timeout). Caching it would
+        # freeze the degraded judgment across every future run.
+        if not str(decision.justification or "").startswith("LLM evaluation failed"):
+            cache.set(cache_key, decision)
         return index, decision, log_data
 
     if max_workers <= 1:
@@ -146,6 +161,16 @@ def run_directional_mapping(
                 logger.event("candidate_generation", **log_data)
 
     final_decisions = [d for d in decisions if d is not None]
+    # Failure fallbacks are degraded, score-only judgments: surface them loudly
+    # instead of letting them silently masquerade as real LLM decisions.
+    fallback_decisions = [d for d in final_decisions if str(d.justification or "").startswith("LLM evaluation failed")]
+    if fallback_decisions:
+        fallbacks = [d.source_id for d in fallback_decisions]
+        # Group by error signature so the root cause is readable at a glance.
+        error_counts = Counter(str(d.scoring_rationale or "unknown").split(":")[0] for d in fallback_decisions)
+        print(f"[WARNING] {len(fallbacks)}/{len(final_decisions)} pairwise decision(s) used the failure fallback "
+              f"(LLM call failed): {dict(error_counts)} — e.g. {fallback_decisions[0].scoring_rationale}", flush=True)
+        logger.event("direction_mapping.failure_fallbacks", direction=direction, count=len(fallbacks), errors=dict(error_counts), source_ids=fallbacks)
     logger.event("direction_mapping.done", direction=direction, decisions=len(final_decisions))
     return final_decisions
 
@@ -375,6 +400,7 @@ def build_candidates_payload(candidate_scores: list[CandidateScore], target_by_i
             "combined_score": round(s.combined_score, 4),
             "hard_gate": s.hard_gate,
             "rank": s.final_rank,
+            "affinity_injected": bool(getattr(s, "affinity_injected", False)),
         })
     return candidates_payload
 
@@ -427,9 +453,12 @@ def evaluate_candidates(
         result = llm.judge_json(prompt)
         decision = decision_from_llm_result(direction, source, result, candidates_payload, target_by_id)
         return sanitize_decision(decision, app_cfg)
-    except Exception:
+    except Exception as exc:
         decision = heuristic_decision(direction, source, candidates_payload, target_by_id, app_cfg)
         decision.justification = "LLM evaluation failed; deterministic heuristic fallback used. Manual review required."
+        # Keep the real cause visible: silent fallbacks previously hid weeks of
+        # systematic failures (timeouts, rate limits, parse errors) as scores.
+        decision.scoring_rationale = f"fallback_error={type(exc).__name__}: {str(exc)[:300]}"
         decision.recommendation = "Manual review required. Technical API details are available in logs."
         if decision.coverage_level > 50:
             decision.coverage_level = 50
@@ -488,6 +517,41 @@ def _to_gap_items(value: Any) -> list[dict[str, str]]:
         })
     return out
 
+# Models sometimes return verbal scales instead of numbers ("confidence":
+# "medium"). A bare float()/int() cast used to raise here and silently discard
+# the ENTIRE LLM decision in favour of the deterministic fallback.
+_VERBAL_SCALE = {
+    "very low": 0.2, "low": 0.35, "medium": 0.6, "moderate": 0.6,
+    "high": 0.85, "very high": 0.95,
+}
+
+
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value or "").strip().lower()
+    if not text:
+        return default
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    for word, score in sorted(_VERBAL_SCALE.items(), key=lambda kv: -len(kv[0])):
+        if word in text:
+            return score
+    return default
+
+
+def _coerce_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        try:
+            return int(round(float(str(value).strip())))
+        except Exception:
+            return default
+
+
 def decision_from_llm_result(
     direction: str,
     source: AtomicRequirement,
@@ -520,12 +584,12 @@ def decision_from_llm_result(
         "source_category": source.category,
         "relation_type": str(result.get("relation_type") or "gap"),
         "equivalence_level": str(result.get("equivalence_level") or "Gap"),
-        "coverage_level": int(result.get("coverage_level") or 0),
+        "coverage_level": _coerce_int(result.get("coverage_level"), 0),
         "match_type": str(result.get("match_type") or "None"),
-        "confidence": float(result.get("confidence") or 0.0),
+        "confidence": _coerce_float(result.get("confidence"), 0.0),
         "justification": str(result.get("justification") or ""),
         "gap": str(result.get("gap") or ""),
-        "gap_type": normalize_gap_type(str(result.get("gap_type") or result.get("gap_classification") or ""), int(result.get("coverage_level") or 0), str(result.get("relation_type") or "")),
+        "gap_type": normalize_gap_type(str(result.get("gap_type") or result.get("gap_classification") or ""), _coerce_int(result.get("coverage_level"), 0), str(result.get("relation_type") or "")),
         "combine_controls": str(result.get("combine_controls") or ""),
         "recommendation": str(result.get("recommendation") or ""),
         "candidates": candidates_payload,
@@ -776,6 +840,16 @@ def rescue_gap_decision(decision: MappingDecision, app_cfg: AppConfig | None, *,
     if not candidate_id:
         return None
 
+    # Action/object floor. The judge scored this a true gap. A high embedding
+    # similarity with WEAK action/object alignment means thematic proximity, not
+    # functional coverage (e.g. "coordinate backup testing with IR functions" vs
+    # "backup protection": same theme, different obligation). Rescuing on semantic
+    # score alone re-credits these to 50-80. When functional alignment is below the
+    # floor, respect the judge's true gap instead of overriding it on embeddings.
+    ao_floor = getattr(app_cfg, "candidate_rescue_min_action_object_threshold", 0.45)
+    if ao < ao_floor:
+        return None
+
     rescue_type = ""
     coverage = 0
     equivalence = "Gap"
@@ -786,9 +860,13 @@ def rescue_gap_decision(decision: MappingDecision, app_cfg: AppConfig | None, *,
     # Strong enough for direct partial coverage. This is intentionally less
     # punitive than v3.5: a good semantic/structured candidate should not vanish
     # as Gap solely because action-object lexical overlap is imperfect.
+    # Coverage is capped at 50: a rescue is evidence-based on retrieval scores
+    # alone, over a judge decision that said true gap. It must surface the pair
+    # for review as partial, never re-credit it to "Mostly covered" (80): every
+    # observed 80-level rescue contradicted the judge's own domain analysis.
     if combined >= app_cfg.candidate_rescue_partial_combined_threshold and semantic >= app_cfg.candidate_rescue_partial_semantic_threshold:
         rescue_type = "partial_gap"
-        coverage = 50 if ao < app_cfg.object_action_cap_75_threshold else 80
+        coverage = 40 if ao < app_cfg.object_action_cap_75_threshold else 50
         equivalence = "Partial"
         relation = "partial"
         match_type = "Candidate rescue - partial"

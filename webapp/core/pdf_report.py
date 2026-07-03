@@ -56,20 +56,20 @@ def generate_mapping_pdf(
 
     doc = SimpleDocTemplate(str(path), pagesize=A4, topMargin=18 * mm, bottomMargin=18 * mm,
                             leftMargin=16 * mm, rightMargin=16 * mm,
-                            title=f"Synthèse mapping {source_name} → {target_name}")
+                            title=f"Mapping summary {source_name} → {target_name}")
     flow = []
 
-    flow.append(Paragraph("Synthèse de conformité NIS2", title))
+    flow.append(Paragraph("NIS2 compliance summary", title))
     flow.append(Paragraph(f"<b>{source_name}</b> &rarr; <b>{target_name}</b>", normal))
-    flow.append(Paragraph(f"Généré le {datetime.now():%Y-%m-%d %H:%M} · Run {run_id}", normal))
+    flow.append(Paragraph(f"Generated on {datetime.now():%Y-%m-%d %H:%M} · Run {run_id}", normal))
     flow.append(Spacer(1, 8 * mm))
 
     # --- KPIs ---
-    flow.append(Paragraph("Indicateurs clés", h2))
+    flow.append(Paragraph("Key indicators", h2))
     kpi_data = [
-        ["Couverture moyenne", f"{summary.get('average_coverage', 0)}%"],
-        ["Décisions analysées", str(summary.get("atomic_decisions", 0))],
-        ["Écarts (couverture 0)", str(summary.get("gaps", 0))],
+        ["Average coverage", f"{summary.get('average_coverage', 0)}%"],
+        ["Decisions analyzed", str(summary.get("atomic_decisions", 0))],
+        ["Gaps (0 coverage)", str(summary.get("gaps", 0))],
     ]
     kpi = Table(kpi_data, colWidths=[80 * mm, 80 * mm])
     kpi.setStyle(TableStyle([
@@ -85,9 +85,9 @@ def generate_mapping_pdf(
     flow.append(Spacer(1, 6 * mm))
 
     # --- Most material gaps (lowest-covered parent requirements) ---
-    flow.append(Paragraph(f"Écarts prioritaires — {source_name} couvert par {target_name}", h2))
+    flow.append(Paragraph(f"Priority gaps — {source_name} covered by {target_name}", h2))
     rows = sorted(_parent_rows(a_to_b), key=lambda r: r[2])[:20]
-    table_data = [["Exigence source", "Catégorie ENISA", "Couverture"]]
+    table_data = [["Source requirement", "ENISA category", "Coverage"]]
     for pid, category, cov in rows:
         table_data.append([Paragraph(pid, normal), Paragraph(category or "—", normal), f"{cov:.0f}%"])
     gaps_table = Table(table_data, colWidths=[45 * mm, 90 * mm, 25 * mm], repeatRows=1)
