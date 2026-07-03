@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 
 from webapp.api.routes import frameworks, categories, settings, mappings, baselines, outputs
 
-app = FastAPI(title="NIS2 Mapper API", version="1.0.0")
+app = FastAPI(title="Compliance Assistant API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
