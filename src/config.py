@@ -91,6 +91,7 @@ class AppConfig:
     validate_output_target_ids: bool
     invalid_target_id_policy: str
     use_llm_atomization: bool
+    translate_requirements_to_english: bool
     use_llm_field_extraction: bool
     max_requirements_per_framework: int
 
@@ -176,6 +177,7 @@ class AppConfig:
     # Prompts
     prompt_atomize: str
     prompt_extract_fields: str
+    prompt_translate_requirement: str
     prompt_keyword_normalization: str
     prompt_pairwise_match: str
     prompt_final_judge: str
@@ -307,6 +309,7 @@ def load_config(env_path: str | Path = ".env", overrides: dict[str, str] | None 
         validate_output_target_ids=as_bool(_env("VALIDATE_OUTPUT_TARGET_IDS"), True),
         invalid_target_id_policy=_env("INVALID_TARGET_ID_POLICY", "raise").strip().lower(),
         use_llm_atomization=as_bool(_env("USE_LLM_ATOMIZATION"), True),
+        translate_requirements_to_english=as_bool(_env("TRANSLATE_REQUIREMENTS_TO_ENGLISH"), True),
         use_llm_field_extraction=as_bool(_env("USE_LLM_FIELD_EXTRACTION"), True),
         max_requirements_per_framework=as_int(_env("MAX_REQUIREMENTS_PER_FRAMEWORK"), 0),
         use_semantic_matching=as_bool(_env("USE_SEMANTIC_MATCHING"), True),
@@ -385,6 +388,7 @@ def load_config(env_path: str | Path = ".env", overrides: dict[str, str] | None 
         organization_name=_env("ORGANIZATION_NAME", ""),
         prompt_atomize=decode_env_prompt(_env("PROMPT_ATOMIZE", "")),
         prompt_extract_fields=decode_env_prompt(_env("PROMPT_EXTRACT_FIELDS", "")),
+        prompt_translate_requirement=decode_env_prompt(_env("PROMPT_TRANSLATE_REQUIREMENT", "")),
         prompt_keyword_normalization=decode_env_prompt(_env("PROMPT_KEYWORD_NORMALIZATION", "")),
         prompt_pairwise_match=decode_env_prompt(_env("PROMPT_PAIRWISE_MATCH", "")),
         prompt_final_judge=decode_env_prompt(_env("PROMPT_FINAL_JUDGE", "")),

@@ -85,6 +85,10 @@ class AzureOpenAIClient:
         self.embedding_dimensions = embedding_dimensions
         self.dry_run = dry_run
         self._client = None
+        # Deployments that rejected the `temperature` parameter (reasoning-tier
+        # models such as gpt-5.6-* only accept the default). Once a deployment
+        # is in this set, calls to it omit temperature entirely.
+        self._no_temperature: set[str] = set()
         # Accumulates token usage per deployment across the whole run so the
         # total cost can be estimated at the end (see src/cost.py).
         self.usage = UsageTracker()
@@ -133,18 +137,36 @@ class AzureOpenAIClient:
             return {"dry_run": True}
         assert self._client is not None
         deployment = model or self.text_deployment
-        response = self._with_retries(
-            lambda: self._client.chat.completions.create(
-                model=deployment,
-                messages=[
+
+        def _call():
+            kwargs: dict[str, Any] = {
+                "model": deployment,
+                "messages": [
                     {"role": "system", "content": "Return valid JSON only. Do not include markdown fences."},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=self.temperature,
-                response_format={"type": "json_object"},
-            ),
-            what=f"chat.completions[{deployment}]",
-        )
+                "response_format": {"type": "json_object"},
+            }
+            if deployment not in self._no_temperature:
+                kwargs["temperature"] = self.temperature
+            return self._client.chat.completions.create(**kwargs)
+
+        try:
+            response = self._with_retries(_call, what=f"chat.completions[{deployment}]")
+        except Exception as exc:
+            # Reasoning-tier models (gpt-5.6-*) reject non-default temperature with
+            # a 400. Retry once without it and remember for the whole run — a 400
+            # is not transient, so without this every call to that deployment fails.
+            msg = str(exc)
+            # No membership guard here: with concurrent workers, several first-wave
+            # calls can all get the 400 before any of them memoizes the deployment —
+            # each of them must retry (the retry itself omits temperature, so it
+            # cannot loop).
+            if "temperature" in msg and "unsupported" in msg.lower():
+                self._no_temperature.add(deployment)
+                response = self._with_retries(_call, what=f"chat.completions[{deployment}]")
+            else:
+                raise
         self._record_usage(deployment, getattr(response, "usage", None))
         text = response.choices[0].message.content or ""
         return self._parse_json(text)

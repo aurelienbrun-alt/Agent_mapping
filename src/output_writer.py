@@ -568,7 +568,7 @@ def _write_atomic_sheet(wb, sheet_name: str, decisions: list[MappingDecision], s
             d.source_requirement,
             d.source_category,
             target_name,
-            ", ".join(d.target_ids),
+            ", ".join(_clean_display_id(t) for t in d.target_ids),
             "\n---\n".join(d.target_requirements),
             _atomic_relationship(d),
             getattr(d, "gap_type", "") or _gap_type_from_decision(d),
@@ -615,9 +615,10 @@ def _write_category_quality(wb, decisions: list[MappingDecision]) -> None:
     parent_seen: dict[str, dict[str, Any]] = {}
     for d in decisions:
         # Category harmonization metadata is not on MappingDecision; infer from candidate payload where possible.
-        parent_seen[d.source_parent_id or d.source_id] = {
+        display_id = _clean_display_id(d.source_parent_id or d.source_id)
+        parent_seen[display_id] = {
             "Direction": d.direction,
-            "Source control ID": d.source_parent_id or d.source_id,
+            "Source control ID": display_id,
             "ENISA category": d.source_category,
             "Mapping risk": d.mapping_risk,
             "Coverage": d.coverage_level,
@@ -631,55 +632,44 @@ def _write_category_quality(wb, decisions: list[MappingDecision]) -> None:
 
 
 def _select_items_for_target_listing(items: list[MappingDecision]) -> list[MappingDecision]:
-    """Return the subset of decisions whose targets appear in the parent row.
+    """Return the decisions whose targets are eligible for the parent target listing.
 
-    When high-quality decisions exist, suppress low-confidence ones to avoid
-    an inflated list of target requirements. All items still contribute to
-    the coverage average; only the target listing is filtered.
+    Every atomic decision that selected a target must be able to contribute its
+    target family to the parent row - a target picked at the atomic level must
+    never disappear from the roll-up just because other atoms under the same
+    parent scored higher. All items still contribute to the coverage average;
+    this only decides what feeds the target listing.
     """
-    GOOD_COVERAGE = 50
-    good = [d for d in items if d.coverage_level >= GOOD_COVERAGE and d.target_ids]
-    if good:
-        return good
     with_target = [d for d in items if d.target_ids]
     return with_target or items
 
 
 def _build_target_listings(
     items: list[MappingDecision],
-    min_free: int = 2,
-    coverage_ratio: float = 0.50,
     max_targets: int = 5,
 ) -> tuple[list[str], list[str]]:
-    """Select target IDs and requirements with a progressive coverage threshold.
+    """Union the distinct target families selected across all atoms.
 
-    The first min_free targets are always included. Each subsequent target is
-    accepted only when its coverage exceeds average_of_accepted * coverage_ratio.
-    Items must be pre-sorted by coverage descending so we can stop as soon as the
-    threshold is not met (no later item can do better).
+    Items must be pre-sorted by coverage descending so the best-covered
+    families are listed first, but every atom's family is included as long as
+    it is not already represented - low-coverage atoms are never dropped
+    outright, since their selected target is a real consultant/atomic pick,
+    not noise. Only the max_targets cap trims the list.
     """
     result_ids: list[str] = []
     result_reqs: list[str] = []
-    coverages: list[int] = []
 
     for d in items:
         if len(result_ids) >= max_targets:
             break
-        new_ids = [t for t in (d.target_parent_ids or [_parent_id(x) for x in d.target_ids]) if t and t not in result_ids]
+        # Clean BEFORE dedup so 'X' and 'X__row_52' collapse to one display id.
+        new_ids = [t for t in (_clean_display_id(x) for x in (d.target_parent_ids or [_parent_id(x) for x in d.target_ids])) if t and t not in result_ids]
         new_reqs = [r for r in (d.target_parent_requirements or d.target_requirements) if r and r not in result_reqs]
         if not new_ids and not new_reqs:
             continue
-        if len(result_ids) < min_free:
-            include = True
-        else:
-            avg = sum(coverages) / len(coverages)
-            include = d.coverage_level > avg * coverage_ratio
-        if not include:
-            break
         slots = max_targets - len(result_ids)
         result_ids.extend(new_ids[:slots])
         result_reqs.extend(new_reqs[:slots])
-        coverages.append(d.coverage_level)
 
     return result_ids, result_reqs
 
@@ -1422,5 +1412,9 @@ def _parent_id(atomic_id: str) -> str:
 
 
 def _clean_display_id(id_str: str) -> str:
-    """Strip internal __row_N suffixes added when source data has duplicate IDs."""
-    return re.sub(r"__row_\d+$", "", str(id_str or ""))
+    """Strip internal __row_N suffixes added when source data has duplicate IDs.
+
+    Not anchored at end-of-string: atomic ids carry the suffix mid-string
+    (GV.OC-04.2__row_8#1), and the suffix also leaks through TARGET id lists,
+    not only source ids."""
+    return re.sub(r"__row_\d+", "", str(id_str or ""))

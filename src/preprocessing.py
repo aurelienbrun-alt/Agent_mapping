@@ -13,7 +13,7 @@ from .azure_openai_client import AzureOpenAIClient
 from .models import AtomicRequirement, RequirementRow
 from .category_harmonizer import harmonize_rows_to_enisa_categories
 from .category_taxonomy import repair_atoms_categories
-from .utils import normalize_text, tokenize, render_prompt
+from .utils import normalize_text, tokenize, render_prompt, stable_hash, read_json, write_json
 from .cache import (
     cache_dir,
     cache_mode_description,
@@ -25,6 +25,8 @@ from .cache import (
     save_fields_cache,
 )
 from .logging_utils import JsonlRunLogger
+
+TRANSLATION_CACHE_FILE = "translations_en.json"
 
 
 def active_embedding_model_name(app_cfg: AppConfig) -> str:
@@ -100,6 +102,10 @@ def process_framework(framework_cfg: FrameworkConfig, app_cfg: AppConfig, llm: A
     logger.event("framework.read.start", framework=framework_cfg.name, file=str(framework_cfg.file))
     rows = read_framework_excel(framework_cfg, app_cfg)
     logger.event("framework.read.done", framework=framework_cfg.name, requirements=len(rows))
+
+    # English pivot FIRST: everything downstream (categories, atomization, fields,
+    # embeddings, judges, output) must see a single language. Cached per framework.
+    rows = translate_rows_to_english(rows, framework_cfg, app_cfg, llm, logger)
 
     # Enterprise category harmonization: only executed when the processed framework cache is absent
     # or REBUILD_CACHE=true. No subcategory is used in this edition.
@@ -223,6 +229,126 @@ def process_framework(framework_cfg: FrameworkConfig, app_cfg: AppConfig, llm: A
     return atoms
 
 
+def _translation_cache_key(row: RequirementRow, app_cfg: AppConfig) -> str:
+    return stable_hash({
+        "title": row.title,
+        "requirement": row.requirement,
+        "prompt": stable_hash(app_cfg.prompt_translate_requirement),
+        "model": getattr(app_cfg, "azure_openai_text_deployment", ""),
+    })
+
+
+def _translate_row(row: RequirementRow, app_cfg: AppConfig, llm: AzureOpenAIClient) -> dict[str, str]:
+    """Translate one row to English. Returns {} when the source is already English."""
+    prompt = render_prompt(
+        app_cfg.prompt_translate_requirement,
+        framework_name=row.framework,
+        source_id=row.source_id,
+        title=row.title,
+        requirement=row.requirement,
+    )
+    result = llm.generate_json(prompt)
+    language = normalize_text(str(result.get("source_language") or "")).lower()
+    requirement_en = normalize_text(str(result.get("requirement_en") or ""))
+    title_en = normalize_text(str(result.get("title_en") or ""))
+    # An empty translation must never silently blank a requirement: keep the source.
+    if not requirement_en:
+        return {"source_language": language or "unknown", "requirement_en": "", "title_en": ""}
+    return {"source_language": language or "unknown", "requirement_en": requirement_en, "title_en": title_en}
+
+
+def translate_rows_to_english(
+    rows: list[RequirementRow],
+    framework_cfg: FrameworkConfig,
+    app_cfg: AppConfig,
+    llm: AzureOpenAIClient,
+    logger: JsonlRunLogger,
+) -> list[RequirementRow]:
+    """Rewrite every requirement into English BEFORE atomization (English pivot).
+
+    Runs at row level (one call per parent requirement, not per atom) so the whole
+    downstream pipeline — atomization, structured fields, embeddings, judges and the
+    output workbook — works on a single language. Cross-language token comparison in
+    structured_similarity/action_object_similarity is otherwise near-zero, and that
+    is ~55% of the retrieval weight.
+
+    The source text is preserved on the row for traceability. Results are cached in
+    the framework cache dir, so re-runs and atomization rebuilds cost nothing.
+    """
+    if not rows or not getattr(app_cfg, "translate_requirements_to_english", False):
+        return rows
+    if app_cfg.dry_run_without_llm or not app_cfg.prompt_translate_requirement.strip():
+        logger.event("translation.skip", framework=framework_cfg.name,
+                     reason="dry_run" if app_cfg.dry_run_without_llm else "no_prompt")
+        return rows
+
+    cdir = cache_dir(framework_cfg, app_cfg)
+    cdir.mkdir(parents=True, exist_ok=True)
+    cache_path = cdir / TRANSLATION_CACHE_FILE
+    # read_json raises when the file is absent, and a corrupted cache must degrade
+    # to a re-translation, never break the run.
+    cache: dict[str, Any] = {}
+    if cache_path.exists():
+        try:
+            loaded = read_json(cache_path)
+            cache = loaded if isinstance(loaded, dict) else {}
+        except Exception:
+            logger.event("translation.cache_unreadable", framework=framework_cfg.name, path=str(cache_path))
+
+    todo = [row for row in rows if _translation_cache_key(row, app_cfg) not in cache]
+    if todo:
+        max_workers = max(1, int(getattr(app_cfg, "max_concurrent_llm_calls", 1) or 1))
+        errors = 0
+
+        def _work(row: RequirementRow) -> tuple[RequirementRow, dict[str, str] | None]:
+            try:
+                return row, _translate_row(row, app_cfg, llm)
+            except Exception:
+                return row, None
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_work, row) for row in todo]
+            for future in tqdm(as_completed(futures), total=len(futures), desc=f"Translate {framework_cfg.name}"):
+                row, payload = future.result()
+                if payload is None:
+                    errors += 1
+                    continue  # never cache a failure: the next run retries it
+                cache[_translation_cache_key(row, app_cfg)] = payload
+        write_json(cache_path, cache)
+        if errors:
+            # A failed translation leaves that requirement in its source language,
+            # which silently degrades matching — surface it instead of hiding it.
+            print(f"[WARNING] {errors}/{len(todo)} translation(s) FAILED for {framework_cfg.name}: "
+                  "those requirements stay in their source language.", flush=True)
+            logger.event("translation.errors", framework=framework_cfg.name, failed=errors, total=len(todo))
+
+    translated = 0
+    already_en = 0
+    for row in rows:
+        payload = cache.get(_translation_cache_key(row, app_cfg))
+        if not payload:
+            continue
+        row.source_language = str(payload.get("source_language") or "")
+        requirement_en = str(payload.get("requirement_en") or "")
+        if not requirement_en or requirement_en == row.requirement:
+            already_en += 1
+            continue
+        row.original_requirement = row.requirement
+        row.original_title = row.title
+        row.requirement = requirement_en
+        title_en = str(payload.get("title_en") or "")
+        if title_en:
+            row.title = title_en
+        translated += 1
+
+    logger.event("translation.done", framework=framework_cfg.name, rows=len(rows),
+                 translated=translated, already_english=already_en,
+                 languages=sorted({r.source_language for r in rows if r.source_language}))
+    print(f"  [Translation] {framework_cfg.name}: {translated} requirement(s) translated to English, "
+          f"{already_en} already English.", flush=True)
+    return rows
+
+
 def atomize_row(row: RequirementRow, app_cfg: AppConfig, llm: AzureOpenAIClient) -> list[AtomicRequirement]:
     if app_cfg.dry_run_without_llm or not app_cfg.use_llm_atomization:
         parts = heuristic_atomize(row.requirement)
@@ -344,6 +470,8 @@ def _to_atom(row: RequirementRow, atom_index: int, text: str, rationale: str) ->
         subcategory=row.subcategory,
         row_number=row.row_number,
         atomization_rationale=rationale,
+        parent_requirement_original=row.original_requirement,
+        source_language=row.source_language,
         original_category=row.original_category or row.category,
         category_harmonization_reason=row.category_harmonization_reason,
         category_harmonization_confidence=row.category_harmonization_confidence,

@@ -28,8 +28,19 @@ from pathlib import Path
 
 import pandas as pd
 
-ID_RE = re.compile(r"([A-Z]{2}\.[A-Z]{2}-\d+\.\d+)")
+# Accepts the canonical form (ID.AM-03.2) plus the dash-typo variant sometimes
+# present in source workbooks (ID.AM-03-2); canonical_id() normalizes the latter
+# so both sides of the comparison always match.
+ID_RE = re.compile(r"([A-Z]{2}\.[A-Z]{2}-\d+[.\-]\d+)")
 BUCKETS = (0, 25, 50, 75, 100)
+
+
+def canonical_id(raw_id: str) -> str:
+    """Normalize 'GV.OC-03-1' (typo) to the canonical 'GV.OC-03.1'."""
+    if raw_id.count("-") == 2:
+        head, _, tail = raw_id.rpartition("-")
+        return f"{head}.{tail}"
+    return raw_id
 
 # Order matters: "not covered" must match before "covered".
 LABELS = [
@@ -88,7 +99,7 @@ def parse_agent(raw: pd.DataFrame) -> dict[str, int]:
         m = ID_RE.search(str(row.get("Source control ID") or ""))
         bucket = to_bucket(row.get("Coverage level"))
         if m and bucket is not None:
-            result[m.group(1)] = bucket
+            result[canonical_id(m.group(1))] = bucket
     return result
 
 
@@ -105,7 +116,7 @@ def parse_consultant(raw: pd.DataFrame) -> dict[str, int]:
             if row_id is None:
                 m = ID_RE.search(str(cell or ""))
                 if m:
-                    row_id = m.group(1)
+                    row_id = canonical_id(m.group(1))
             if bucket is None:
                 bucket = label_to_bucket(cell)
         if row_id and bucket is not None:
@@ -128,6 +139,10 @@ def main() -> None:
             agent_df = df
         elif "consultant" in low:
             consultant_df = df
+    # Single-sheet workbook without a 'Consultant' tab name: treat that sheet as
+    # the consultant side (avoids having to rename tabs in comparison files).
+    if consultant_df is None and len(sheets) == 1:
+        consultant_df = next(iter(sheets.values()))
 
     if len(sys.argv) >= 3:
         # Two-argument mode: agent side comes from a mapper output workbook's

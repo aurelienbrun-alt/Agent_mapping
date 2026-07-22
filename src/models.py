@@ -17,6 +17,13 @@ class RequirementRow:
     original_category: str = ""
     category_harmonization_reason: str = ""
     category_harmonization_confidence: float = 0.0
+    # English pivot: `requirement`/`title` always hold the ENGLISH text used by the
+    # whole pipeline (atomization, fields, embeddings, judges, output). The source
+    # text is kept verbatim here for traceability. Empty when the source was
+    # already English or translation is disabled.
+    original_requirement: str = ""
+    original_title: str = ""
+    source_language: str = ""
     # Entity criticality (NIS2): essential is always True in the source data;
     # important indicates whether the requirement also applies to important entities.
     essential: bool = True
@@ -50,6 +57,9 @@ class AtomicRequirement:
     category_reason: str = ""
     category_method: str = ""
     category_scores: dict[str, Any] = field(default_factory=dict)
+    # English pivot traceability, inherited from the parent RequirementRow.
+    parent_requirement_original: str = ""
+    source_language: str = ""
     # Entity criticality (NIS2), inherited from the parent RequirementRow.
     essential: bool = True
     important: bool = False

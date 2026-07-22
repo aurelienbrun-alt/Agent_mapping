@@ -16,7 +16,14 @@ def as_bool(value: Any, default: bool = False) -> bool:
         return default
     if isinstance(value, bool):
         return value
-    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+    text = str(value).strip().lower()
+    # An unset env var reads back as "" (os.getenv(name, "")), which is "not set",
+    # not "false". Without this, every as_bool(_env("X"), True) silently resolved to
+    # False and the declared default was dead code — STRICT_INPUT_CACHE_VALIDATION
+    # was OFF, so a modified source Excel file never invalidated its cache.
+    if not text:
+        return default
+    return text in {"1", "true", "yes", "y", "on"}
 
 
 def as_int(value: Any, default: int = 0) -> int:

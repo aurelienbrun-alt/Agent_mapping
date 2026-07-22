@@ -26,16 +26,26 @@ from .utils import normalize_category
 
 
 # Default cross-category affinity, keyed by the coarse — and near-error-free —
-# CyFun function code (GV/PR/DE/RS/RC), mapping to France target family prefixes.
+# CyFun/NIST-CSF function code (GV/ID/PR/DE/RS/RC), mapping to France target
+# family prefixes. Family names below MUST match the exact target family prefix
+# (the token before the first '.' in a control id, e.g. "MCO_MCS.c" -> "MCO_MCS"),
+# because injection matches on `family_of(target) in affine_families` — a short
+# alias like "MCO" would NOT match the real family "MCO_MCS".
 # This is a starter table: edit FAMILY_AFFINITY_FILE to override/extend it.
 DEFAULT_AFFINITY: dict[str, list[str]] = {
-    "GV": ["PSSI", "ROLE", "RISKS", "COMPLIANCE", "ECOSYSTEM", "CONTRACT", "GOVERNANCE", "AUDIT"],
-    "PR": ["SEGMENTATION", "FILTERING", "AUTHENTICATION", "ACCESS", "ADMINISTRATION", "ADMIN",
-           "CONFIGURATION", "PROT", "PHYSICAL", "REMOTE", "DIRECTORIES", "HR", "RH",
-           "BUSINESS", "IDENTIFICATION", "IS", "MCO"],
-    "DE": ["MONITORING", "AUDIT", "INCIDENT", "MCO"],
-    "RS": ["INCIDENT", "CRISIS"],
-    "RC": ["BUSINESS", "CRISIS", "EXERCISES", "INCIDENT"],
+    "GV": ["PSSI", "ROLE", "RISKS", "COMPLIANCE", "ECOSYSTEM", "CONTRACT", "AUDIT"],
+    # ID (Identify) was previously ABSENT — asset-management/inventory (ID.AM),
+    # risk-assessment (ID.RA) and improvement (ID.IM) controls therefore received
+    # no cross-category reach toward the France inventory/mapping/risk families.
+    "ID": ["IS_INVENTORY", "MAPPING", "ECOSYSTEM", "CONTRACT", "RISKS",
+           "MCO_MCS", "AUDIT", "COMPLIANCE", "EXERCISES"],
+    "PR": ["SEGMENTATION", "FILTERING", "AUTHENTICATION", "ACCESS_RIGHTS",
+           "ADMIN_ACCOUNT", "ADMINISTRATION", "CONFIGURATION", "PROT_MALICIOUS_CODE",
+           "PHYSICAL_ACCESS", "REMOTE_ACCESS", "DIRECTORIES", "HR", "RH",
+           "BUSINESS_CONTINUITY", "IDENTIFICATION", "IS_INVENTORY", "MCO_MCS"],
+    "DE": ["MONITORING", "AUDIT", "INCIDENT", "MCO_MCS"],
+    "RS": ["INCIDENT", "CRISIS_MANAGEMENT"],
+    "RC": ["BUSINESS_CONTINUITY", "CRISIS_MANAGEMENT", "EXERCISES", "INCIDENT"],
 }
 
 

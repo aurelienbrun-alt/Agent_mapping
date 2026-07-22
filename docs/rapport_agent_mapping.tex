@@ -1,0 +1,847 @@
+%==============================================================================
+%  RAPPORT TECHNIQUE COMPLET
+%  Compliance Assistant — Agent de mapping de référentiels réglementaires NIS2
+%
+%  Compilation :  pdflatex rapport_agent_mapping.tex   (compiler 2x pour la
+%                 table des matières et les références).
+%  Aucune image externe requise (tous les schémas sont en TikZ, contenus dans
+%  la page via adjustbox).
+%==============================================================================
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[french]{babel}
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{adjustbox}      % pour contenir les schémas dans la largeur de page
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.17}
+\usetikzlibrary{shapes.geometric,arrows.meta,positioning,fit,backgrounds,calc}
+\usepackage{tcolorbox}
+\usepackage[hidelinks,colorlinks=true,linkcolor=navy,urlcolor=blue]{hyperref}
+
+%------------------------------------------------------------------ couleurs
+\definecolor{navy}{RGB}{40,40,110}
+\definecolor{royal}{RGB}{70,70,190}
+\definecolor{lightgrey}{RGB}{244,244,248}
+\definecolor{midgrey}{RGB}{225,225,232}
+\definecolor{accent}{RGB}{99,70,220}
+\definecolor{softgreen}{RGB}{232,244,232}
+\definecolor{codebg}{RGB}{247,247,250}
+
+%------------------------------------------------------------------ identifiants (underscores littéraux, sans échappement)
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\stage}[1]{\textcolor{royal}{\textbf{#1}}}
+
+%------------------------------------------------------------------ en-têtes
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textcolor{navy}{Compliance Assistant --- Rapport technique}}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\titleformat{\chapter}[display]{\normalfont\huge\bfseries\color{navy}}{\chaptertitlename\ \thechapter}{12pt}{\Huge}
+\titlespacing*{\chapter}{0pt}{0pt}{18pt}
+
+%------------------------------------------------------------------ encadrés
+\newtcolorbox{keybox}[1]{colback=lightgrey,colframe=royal,fonttitle=\bfseries,title=#1,boxrule=0.6pt,arc=2pt,left=6pt,right=6pt,top=4pt,bottom=4pt}
+\newtcolorbox{motiv}{colback=white,colframe=accent,boxrule=0.7pt,arc=2pt,left=6pt,right=6pt,top=3pt,bottom=3pt}
+% « En clair » : reformulation grand public d'une notion technique.
+\newtcolorbox{plain}{colback=softgreen,colframe=softgreen!60!black,boxrule=0.5pt,arc=2pt,left=6pt,right=6pt,top=3pt,bottom=3pt}
+\newcommand{\enclair}[1]{\begin{plain}\textbf{En clair :} #1\end{plain}}
+
+%------------------------------------------------------------------ styles TikZ
+\tikzset{
+  stg/.style={rectangle,rounded corners=3pt,draw=royal,fill=lightgrey,text width=3.0cm,align=center,minimum height=1.05cm,font=\small},
+  io/.style={rectangle,draw=navy,fill=white,text width=2.6cm,align=center,minimum height=0.8cm,font=\footnotesize},
+  dec/.style={diamond,draw=accent,fill=white,aspect=2,align=center,font=\scriptsize,inner sep=1pt},
+  fl/.style={-{Stealth[length=2.2mm]},thick,royal},
+}
+% Enveloppe pour garantir qu'un schéma ne déborde jamais de la page.
+\newenvironment{fitpic}{\begin{center}\begin{adjustbox}{max width=\linewidth}}{\end{adjustbox}\end{center}}
+
+%==============================================================================
+\begin{document}
+%------------------------------------------------------------------ page de titre
+\begin{titlepage}
+\centering
+\vspace*{2.0cm}
+{\color{royal}\rule{\linewidth}{1.4pt}}\\[10pt]
+{\Huge\bfseries\color{navy} Compliance Assistant}\\[10pt]
+{\LARGE Agent d'analyse de couverture réglementaire}\\[6pt]
+{\large Mapping automatisé de référentiels de cybersécurité (transpositions NIS2)}\\[8pt]
+{\color{royal}\rule{\linewidth}{1.4pt}}\\[24pt]
+{\large\textbf{Rapport technique complet}}\\[4pt]
+{\normalsize Compréhensible sans connaissance préalable de l'agent}\\[4pt]
+{\normalsize Architecture, fonctions, paramètres, coûts, évolutions et feuille de route}\\[30pt]
+\begin{tabular}{rl}
+\textbf{Projet} & Enterprise Regulatory Framework Mapper\\
+\textbf{Dépôt} & \url{https://github.com/aurelienbrun-alt/Agent_mapping}\\
+\textbf{Principe} & Préparation $\rightarrow$ Recherche de candidats $\rightarrow$ Jugement par IA $\rightarrow$ Agrégation $\rightarrow$ Excel\\
+\textbf{Modèles} & Azure OpenAI : \code{gpt-5.4-nano} / \code{gpt-5.4-mini} / \code{gpt-5.4} / \code{text-embedding-3-large}\\
+\textbf{Volumétrie} & $\sim$7\,750 lignes Python (moteur), $\sim$1\,230 (application web), 145+ paramètres\\
+\end{tabular}
+\vfill
+{\small Document généré à partir de l'analyse exhaustive du code source et des exécutions réelles mesurées.}\\
+\end{titlepage}
+
+\tableofcontents
+\clearpage
+
+%==============================================================================
+\chapter*{Comment lire ce rapport}
+\addcontentsline{toc}{chapter}{Comment lire ce rapport}
+
+Ce rapport est conçu pour être compris \textbf{par une personne qui n'a jamais travaillé sur l'agent}. Chaque terme technique est défini à sa première apparition, et les notions importantes sont reformulées en langage courant dans des encadrés verts « \textbf{En clair} ».
+
+\begin{itemize}[nosep]
+  \item Le \textbf{chapitre~1} pose le problème métier.
+  \item Le \textbf{chapitre~2} est un \emph{glossaire pédagogique} : lisez-le en premier si les mots « embedding », « rappel », « atome » ou « injection d'affinité » ne vous parlent pas.
+  \item Les \textbf{parties~II à VII} entrent dans le détail : fonctionnement étape par étape, référence des paramètres, coûts, évaluation, évolutions et feuille de route.
+\end{itemize}
+
+Convention typographique : les identifiants de code et de paramètres sont en \code{police à chasse fixe}.
+
+%==============================================================================
+\chapter*{Résumé exécutif}
+\addcontentsline{toc}{chapter}{Résumé exécutif}
+
+L'agent \textbf{Compliance Assistant} automatise une tâche coûteuse du conseil en cybersécurité : déterminer \emph{dans quelle mesure un référentiel réglementaire couvre un autre}. Concrètement, il répond à la question « le référentiel français ReCyF~2.5 couvre-t-il chaque exigence du référentiel belge CyFun~2025 ? », et produit un fichier Excel de qualité livrable : couverture en pourcentage par exigence, écarts résiduels détaillés (ce qui manque précisément), plan d'action de remédiation, et un référentiel \emph{consolidé} fusionnant les deux sources en un seul.
+
+Sous le capot, l'agent suit un \textbf{enchaînement de six étapes}. Un texte réglementaire est d'abord découpé en petites « obligations unitaires » ; chacune est décrite par des mots-clés et transformée en un « vecteur » numérique qui capture son sens. Un moteur de \emph{recherche} présélectionne, pour chaque obligation du référentiel source, la vingtaine d'obligations du référentiel cible les plus proches. Une \textbf{intelligence artificielle (le « juge »)} lit alors chaque paire et attribue une couverture de 0 à 100 avec une justification. Des \emph{règles automatiques} corrigent ensuite les excès du juge, une seconde IA relit et harmonise, puis les résultats sont regroupés au niveau des exigences et mis en forme dans le classeur Excel.
+
+Ce rapport documente \textbf{chaque fonction, chaque paramètre et chaque coût}, retrace les \textbf{évolutions} de l'agent avec leurs motivations (dont la découverte d'un défaut technique qui invalidait silencieusement $\sim$85\,\% des jugements), et propose une \textbf{feuille de route}. Chiffres clés mesurés : une analyse complète dans les deux sens, avec référentiel consolidé (218 exigences source, 152 cibles, $\sim$940 obligations unitaires) coûte \textbf{$\sim$10,6~USD} et dure \textbf{$\sim$60~minutes} ; l'accord avec le mapping d'un consultant humain de référence atteint \textbf{68\,\% à un palier près} (et 71\,\% si l'on regarde les familles de contrôles cibles retenues).
+
+%==============================================================================
+\part{Contexte et notions clés}
+
+\chapter{Introduction et objectifs}
+
+\section{Le problème métier}
+La directive européenne NIS2 impose des obligations de cybersécurité, mais \emph{chaque État membre la transpose dans son propre référentiel national} (la Belgique avec CyFun, la France avec le référentiel ReCyF de l'ANSSI, l'Italie, les Pays-Bas, la Grèce\ldots). Une organisation présente dans plusieurs pays, ou un cabinet de conseil accompagnant plusieurs clients, doit répondre à une question récurrente : \emph{« si je suis conforme au référentiel du pays~A, où en suis-je vis-à-vis du pays~B ? »}
+
+Y répondre à la main exige de lire des centaines d'exigences de part et d'autre, de repérer les correspondances, d'évaluer le \emph{degré} de couverture (couvert ? partiellement ? pas du tout ?) et de documenter ce qui manque. C'est long, subjectif, et deux consultants aboutissent rarement au même résultat.
+
+\begin{keybox}{Objectif de l'agent}
+Produire, de façon \textbf{reproductible} et \textbf{traçable}, une \textbf{analyse d'écarts} (en anglais \emph{gap analysis}) entre deux référentiels : pour chaque exigence du référentiel source, quel est le pourcentage de couverture par le référentiel cible, quelles obligations cibles la couvrent, et que manque-t-il précisément.
+\end{keybox}
+
+\section{Ce que produit l'agent}
+\begin{itemize}[nosep]
+  \item une \textbf{couverture chiffrée} par exigence (paliers 0/25/50/75/100 à l'affichage) ;
+  \item une \textbf{qualification de la relation} (couverture directe, partielle, simple support indirect, vrai écart, conflit\ldots) ;
+  \item les \textbf{écarts résiduels} détaillés (acteur, action, objet, périmètre, condition, preuve manquants) ;
+  \item un \textbf{plan d'action} de remédiation ;
+  \item un \textbf{mapping bidirectionnel} (A vers B \emph{et} B vers A) ;
+  \item un \textbf{référentiel consolidé} qui fusionne A enrichi par B, plus les exigences propres à B ;
+  \item une \textbf{application web} pour choisir les référentiels, lancer l'analyse et consulter/télécharger les résultats.
+\end{itemize}
+
+%==============================================================================
+\chapter{Notions clés expliquées simplement}
+\label{ch:concepts}
+
+Ce chapitre définit, sans prérequis, le vocabulaire employé dans tout le rapport. Gardez-le sous la main.
+
+\paragraph{Référentiel.} Un document réglementaire structuré en \emph{exigences} (ex. « l'organisation doit chiffrer ses données sensibles au repos »). Ici, chaque référentiel est un fichier Excel : une ligne par exigence.
+
+\paragraph{Exigence.} Une règle du référentiel, identifiée par un code (ex. \code{PR.DS-01.6}). Une exigence peut contenir \emph{plusieurs} obligations (« faire X \emph{et} Y \emph{et} Z »).
+
+\paragraph{Obligation atomique (« atome »).} L'unité de travail de l'agent. On découpe chaque exigence en obligations \emph{unitaires} — une action, un objet, une obligation vérifiable.
+\enclair{Au lieu de comparer deux paragraphes entiers, on les casse en petites briques comparables une à une. Ainsi « sauvegarder \emph{et} stocker séparément » devient deux briques distinctes, chacune évaluée à part.}
+
+\paragraph{Embedding (vecteur de sens).} Une transformation d'un texte en une liste de nombres (un « vecteur ») telle que deux textes de sens proche donnent des vecteurs proches. On mesure la proximité par le \emph{cosinus} entre vecteurs.
+\enclair{On donne à chaque phrase une « empreinte numérique ». Deux phrases qui parlent de la même chose ont des empreintes qui se ressemblent, même si les mots diffèrent. C'est ce qui permet de rapprocher automatiquement des exigences rédigées différemment.}
+
+\paragraph{Recherche de candidats / rappel (\emph{retrieval}, \emph{recall}).} Pour une obligation source, on ne peut pas demander à l'IA de la comparer aux $\sim$570 obligations cibles (trop coûteux et bruité). On présélectionne donc les $\sim$20 plus prometteuses : c'est le \emph{retrieval}. Le \emph{rappel} désigne sa capacité à ne pas rater la bonne cible.
+\enclair{Un « entonnoir » qui, parmi des centaines de cibles possibles, en retient une vingtaine à soumettre à l'IA. Si l'entonnoir laisse passer la bonne cible, on dit qu'il a un bon \emph{rappel}.}
+
+\paragraph{Le juge (IA / LLM).} Un grand modèle de langage (Large Language Model) qui, pour une paire (obligation source, obligation cible), \emph{lit} les deux textes et décide du pourcentage de couverture avec une justification.
+
+\paragraph{Couverture et palier (« bucket »).} Un score de 0 à 100. À l'affichage, il est arrondi au palier le plus proche : 0 (non couvert), 25 (indirect), 50 (partiel), 75 (largement), 100 (couvert).
+
+\paragraph{Injection d'affinité.} Une technique pour \emph{aider} l'entonnoir. En plus des 20 candidats trouvés par les empreintes numériques, on \emph{ajoute} quelques cibles appartenant aux familles de contrôles « naturellement liées » au thème de l'exigence source (ex. une exigence de gouvernance $\rightarrow$ on ajoute des cibles de la famille « politique de sécurité »). L'ajout se fait en \emph{union} : on n'enlève jamais de candidat, on en ajoute au plus quelques-uns.
+\enclair{L'entonnoir des empreintes rate parfois une bonne cible parce qu'elle est formulée très différemment. L'injection d'affinité glisse alors, « au cas où », quelques cibles du bon rayon thématique. Comme on ne fait qu'\emph{ajouter}, on ne peut jamais dégrader le résultat : au pire on ajoute une cible inutile que l'IA écartera.}
+
+\paragraph{Le « harnais » d'évaluation.} Un petit programme qui compare automatiquement le résultat de l'agent au mapping d'un consultant humain de référence (le \emph{gold standard}), et calcule un taux d'accord.
+\enclair{Un « correcteur automatique » : il confronte la copie de l'agent au corrigé du consultant et sort une note (taux d'accord), pour mesurer objectivement chaque amélioration.}
+
+\paragraph{Gold standard.} Le mapping de référence produit par un consultant humain, utilisé comme « vérité terrain » pour noter l'agent. \emph{Attention} : c'est l'avis d'\emph{un} consultant ; un désaccord n'est pas toujours une erreur de l'agent.
+
+\paragraph{Vrai écart (\emph{true gap}).} Le cas où \emph{aucune} cible ne couvre réellement l'obligation source (domaine fonctionnel différent) — à ne pas confondre avec un simple partage de vocabulaire.
+
+\paragraph{Cache.} Une mémoire sur disque qui enregistre les résultats coûteux (découpage, empreintes, décisions de l'IA) pour ne pas les recalculer d'un run à l'autre.
+
+%==============================================================================
+\chapter{Architecture générale}
+
+\section{Vue d'ensemble : les six étapes}
+Le point d'entrée en ligne de commande est \code{run_agent.py} ; l'équivalent web est \code{webapp/core/pipeline_runner.py}. Les deux orchestrent la même séquence.
+
+\begin{figure}[h]
+\begin{fitpic}
+\begin{tikzpicture}[node distance=0.5cm and 0.75cm]
+\node[io] (a) {Référentiel A\\(Excel)};
+\node[io,below=of a] (b) {Référentiel B\\(Excel)};
+\node[stg,right=of a] (pre) {\stage{1. Préparation}\\découpage, mots-clés, catégories, empreintes};
+\node[stg,right=of pre] (ret) {\stage{2. Recherche}\\top-20 candidats};
+\node[stg,right=of ret] (jud) {\stage{3. Juge IA}\\couverture 0--100};
+\node[stg,below=of jud] (san) {\stage{3b. Correction}\\règles automatiques};
+\node[stg,left=of san] (fin) {\stage{4. Relecture IA}\\par lots};
+\node[stg,left=of fin] (agg) {\stage{5. Agrégation}\\+ synthèse d'écart};
+\node[stg,left=of agg] (out) {\stage{6. Sortie}\\Excel + tableau de bord};
+\node[io,below=of out] (xlsx) {Classeur\\de mapping};
+\node[io,below=of agg] (cons) {Référentiel\\consolidé};
+\begin{scope}[on background layer]
+\node[draw=midgrey,fill=lightgrey,rounded corners,fit=(pre)(ret)(jud)(san)(fin)(agg)(out),inner sep=8pt] {};
+\end{scope}
+\draw[fl] (a) -- (pre); \draw[fl] (b) -| (pre);
+\draw[fl] (pre) -- (ret); \draw[fl] (ret) -- (jud); \draw[fl] (jud) -- (san);
+\draw[fl] (san) -- (fin); \draw[fl] (fin) -- (agg); \draw[fl] (agg) -- (out);
+\draw[fl] (out) -- (xlsx); \draw[fl] (agg) -- (cons);
+\end{tikzpicture}
+\end{fitpic}
+\caption{Les six étapes du pipeline. De gauche à droite : deux fichiers Excel entrent, un classeur de mapping et un référentiel consolidé sortent.}
+\end{figure}
+
+\section{Cartographie des modules}
+Le moteur (\code{src/}, $\sim$7\,750 lignes) se répartit ainsi (les plus volumineux d'abord). Un « module » est un fichier Python regroupant des fonctions autour d'un rôle.
+
+{\footnotesize
+\begin{longtable}{@{}p{4.4cm}r p{8.8cm}@{}}
+\toprule
+\textbf{Module} & \textbf{Lignes} & \textbf{Rôle}\\
+\midrule\endhead
+\code{output_writer.py} & 1426 & Génère le classeur Excel : regroupe les résultats par exigence, dessine le tableau de bord, les feuilles de détail, la mise en forme.\\
+\code{matching.py} & 1408 & Cœur du système : calcule les scores des candidats, appelle le juge IA, applique les règles de correction.\\
+\code{category_taxonomy.py} & 802 & Classe chaque obligation dans une catégorie thématique commune (taxonomie ENISA).\\
+\code{parent_gap_synthesis.py} & 521 & Rédige, par IA, l'analyse d'écart au niveau de l'exigence.\\
+\code{config.py} & 453 & Charge et valide la configuration (145+ paramètres).\\
+\code{preprocessing.py} & 380 & Découpage en obligations, extraction de mots-clés, calcul des empreintes.\\
+\code{consolidated_framework.py} & 261 & Construit le référentiel fusionné A+B.\\
+\code{action_plan.py} & 230 & Rédige, par IA, les plans d'action de remédiation.\\
+\code{azure_openai_client.py} & 220 & Dialogue avec l'IA Azure OpenAI (relance en cas d'erreur, délai, comptage de coût).\\
+\code{cache.py} & 212 & Mémoire disque de l'étape de préparation.\\
+\code{consolidated_output_writer.py} & 193 & Écriture Excel du référentiel consolidé.\\
+\code{log_analyzer.py} & 181 & Rapport d'analyse après exécution, à partir des journaux.\\
+\code{guideline_rag.py} & 178 & Enrichissement optionnel à partir de guides officiels (désactivé par défaut).\\
+\code{mapping_cache.py} & 175 & Mémoire disque des décisions de l'IA.\\
+\code{final_judge.py} & 168 & Relecture IA par lots et application des corrections.\\
+\code{category_harmonizer.py} & 147 & Première projection des exigences vers la taxonomie commune.\\
+\code{cost.py} & 140 & Comptage des jetons (tokens) et estimation du coût par modèle.\\
+\code{family_affinity.py} & 131 & Ajout de candidats « du bon rayon » (injection d'affinité).\\
+\code{utils.py} & 130 & Outils : empreinte de hachage, lecture de configuration, découpage en mots.\\
+\code{excel_io.py} & 125 & Lecture des fichiers Excel d'entrée.\\
+\code{validation.py} & 119 & Contrôles de cohérence (référentiels non vides, identifiants valides).\\
+\code{models.py} & 110 & Définition des structures de données.\\
+\code{logging_utils.py} & 43 & Journalisation structurée.\\
+\bottomrule
+\caption{Modules du moteur (\code{src/}). Total : 265 fonctions.}
+\end{longtable}
+}
+
+\section{Les structures de données}
+Quatre « structures » (dataclasses) circulent entre les étapes. Une structure est un simple conteneur de champs nommés.
+\begin{itemize}[nosep]
+  \item \code{RequirementRow} : une ligne brute lue dans l'Excel (code, titre, texte, catégorie, drapeaux NIS2 « essentiel »/« important »).
+  \item \code{AtomicRequirement} : une obligation unitaire, enrichie de ses mots-clés, de son empreinte numérique, de sa catégorie et de ses champs structurés (acteur, action, objet\ldots).
+  \item \code{CandidateScore} : les scores d'un candidat cible pour une obligation source (score d'empreinte, d'alignement action/objet, score combiné, rang\ldots).
+  \item \code{MappingDecision} : la décision finale pour une obligation source (cibles retenues, couverture 0--100, type d'écart, écarts détaillés, justification).
+\end{itemize}
+
+%==============================================================================
+\part{Le fonctionnement, étape par étape}
+
+\chapter{Étape 1 --- Préparation des référentiels}
+
+Module : \code{preprocessing.py}. Cette étape transforme les fichiers Excel bruts en obligations unitaires prêtes à comparer. Elle est fortement \emph{mise en cache} : elle ne s'exécute qu'au premier passage sur un fichier donné, puis ses résultats sont relus du disque.
+
+\section{Découpage en obligations (atomisation)}
+Une IA légère et peu coûteuse (\code{gpt-5.4-nano}) découpe chaque exigence en obligations unitaires. Exemple : « l'organisation doit sauvegarder ses données critiques \emph{et} les stocker sur un système séparé » donne deux obligations. En cas d'indisponibilité de l'IA, un découpage de secours par ponctuation prend le relais.
+
+\section{Extraction de champs structurés}
+Pour chaque obligation, l'IA renseigne un petit formulaire : \emph{action} (le verbe principal), \emph{objet} (ce sur quoi porte l'action), \emph{type de contrôle} (contrôle d'accès, cryptographie, sauvegarde\ldots), mots-clés\ldots Ces champs serviront à comparer les obligations autrement que par leur seule empreinte.
+
+\section{Catégorisation commune (taxonomie ENISA)}
+Les deux référentiels sont projetés sur \textbf{la même grille de 13 catégories} définie par l'ENISA (gestion des risques, gestion des incidents, continuité, contrôle d'accès, cryptographie\ldots). C'est déterminant : cela donne un « langage commun » aux deux référentiels.
+\enclair{Deux référentiels de pays différents n'organisent pas leurs exigences pareil. On les range d'abord dans une même grille de rayons thématiques, comme deux supermarchés dont on réorganiserait les produits selon les mêmes catégories — ce qui rend la comparaison possible.}
+
+\section{Empreintes numériques (embeddings)}
+Chaque obligation reçoit son empreinte via le modèle \code{text-embedding-3-large} (512 dimensions), par paquets de 64.
+
+\begin{keybox}{Garde-fou anti « empreinte vide » (correctif de juillet 2026)}
+Le cache renvoyait parfois une obligation dont l'empreinte était \emph{vide}. Une telle obligation devenait \emph{définitivement} introuvable par la recherche, sans que personne ne s'en aperçoive. Une fonction détecte désormais toute empreinte vide au chargement et la recalcule.
+\end{keybox}
+
+\section{Parallélisation}
+Le découpage et l'extraction de champs sont exécutés en parallèle (plusieurs obligations traitées simultanément), tout en préservant l'ordre pour garantir des identifiants stables.
+
+%==============================================================================
+\chapter{Étape 2 --- Recherche des candidats (retrieval)}
+
+Module : \code{matching.py}. Objectif : réduire les $\sim$570 obligations cibles à une vingtaine de candidats que le juge IA pourra lire pour chaque obligation source.
+
+\begin{figure}[h]
+\begin{fitpic}
+\begin{tikzpicture}[node distance=0.9cm]
+\node[io,text width=3.4cm] (pool) {Toutes les cibles\\($\sim$570 obligations)};
+\node[stg,right=of pool,text width=3.6cm] (score) {4 scores par candidat\\empreinte · champs · action/objet · catégorie};
+\node[stg,right=of score,text width=2.9cm] (rrf) {Fusion des classements (RRF)};
+\node[stg,right=of rrf,text width=2.5cm] (topk) {Top-20\\retenus};
+\node[io,below=0.7cm of topk,text width=3.4cm] (inj) {+ injection d'affinité\\(union, jamais filtre)};
+\draw[fl] (pool)--(score); \draw[fl] (score)--(rrf); \draw[fl] (rrf)--(topk); \draw[fl] (inj)--(topk);
+\end{tikzpicture}
+\end{fitpic}
+\caption{L'entonnoir de recherche : de $\sim$570 cibles à $\sim$20 candidats soumis au juge.}
+\end{figure}
+
+\section{Les quatre signaux de proximité}
+Chaque candidat reçoit quatre scores, combinés en un score global :
+\begin{itemize}[nosep]
+  \item \textbf{Sémantique} (poids 0,35) : proximité des empreintes numériques. Capte le sens général.
+  \item \textbf{Champs structurés} (poids 0,30) : recouvrement des formulaires extraits à l'étape~1.
+  \item \textbf{Alignement action/objet} (poids 0,30) : le verbe principal et l'objet coïncident-ils ? C'est le signal le plus \emph{précis} : il distingue « vérifier l'intégrité » de « répondre à un incident » là où les empreintes les confondent (les deux « parlent de sécurité »).
+  \item \textbf{Prior de catégorie} (poids 0,03) : petit bonus si les deux obligations partagent une catégorie ENISA. Jamais un filtre.
+\end{itemize}
+
+\section{Fusion des classements (RRF)}
+Plutôt que d'additionner des scores d'échelles différentes (ce qui fausserait la comparaison), on fusionne les \emph{rangs} : chaque candidat est mieux classé s'il apparaît bien placé selon plusieurs signaux. Cette technique (\emph{Reciprocal Rank Fusion}) est robuste aux échelles hétérogènes.
+
+\section{Mode de périmètre}
+Le mode recommandé (\code{soft_enisa}) considère \emph{tout} le référentiel cible comme réservoir de candidats ; la catégorie n'est qu'un bonus. Les modes qui \emph{filtrent} durement par catégorie ont été écartés : si une exigence est mal catégorisée, le filtre exclut d'emblée les bonnes cibles (perte d'information).
+
+\section{Injection d'affinité (rappel de définition)}
+\label{sec:affinity}
+Module \code{family_affinity.py}. Rappel du chapitre~\ref{ch:concepts} : en plus des 20 candidats des empreintes, on \emph{ajoute} jusqu'à 4 cibles appartenant aux familles de contrôles affines au thème de la source. Cet ajout est en \emph{union} (on n'enlève jamais rien).
+
+\begin{motiv}
+\textbf{Pourquoi cette garantie « zéro perte »} : les 20 candidats des empreintes sont toujours conservés à l'identique. Une catégorie erronée ne peut donc qu'\emph{ajouter} du bruit (que le juge écarte), jamais masquer la bonne cible.\\[3pt]
+\textbf{Pourquoi désactivée par défaut} : sur le jeu de test « gouvernance » (Test1), les « manques » supposés étaient en réalité des divergences de \emph{philosophie de notation}, pas de rappel — les bonnes cibles étaient déjà trouvées. L'injection y ajoutait donc du bruit sans bénéfice. Elle reste implémentée et se réactive utilement sur les référentiels où de vraies cibles échappent réellement à l'entonnoir (ex. familles « contrats » et « cartographie »).
+\end{motiv}
+
+\section{Raccourci « écart évident »}
+Si les meilleurs scores sont très bas (sous des seuils prudents), la décision est un écart \emph{sans même appeler l'IA} : c'est une économie sûre.
+
+%==============================================================================
+\chapter{Étape 3 --- Le juge (intelligence artificielle)}
+
+C'est le cœur décisionnel. Pour une obligation source et sa vingtaine de candidats, l'IA renvoie une décision structurée : cibles retenues, couverture 0--100, justification, écarts détaillés. Le comportement du juge est entièrement piloté par un long texte d'instructions (le « prompt »).
+
+\section{Comment le juge raisonne}
+Le prompt lui impose l'ordre suivant :
+\begin{enumerate}[nosep]
+  \item \textbf{Décomposition obligatoire} : avant tout score, l'IA doit extraire l'\emph{action-clé}, l'\emph{objet-clé} et la \emph{condition-clé} de l'obligation source. Elle juge la couverture sur ces éléments décisifs, pas sur les mots secondaires.
+  \item \textbf{Qualification de la relation} : couverture directe, majoritaire, partielle, détail d'implémentation manquant, support indirect, vrai écart, ou conflit — chacun avec sa plage de score.
+  \item \textbf{Règle de priorité} : « même domaine » signifie « même action-clé sur le même objet-clé », \emph{pas} « même thème ».
+  \item \textbf{Règles à la hausse} : crédit élevé quand l'obligation est réellement la même, même formulée autrement.
+  \item \textbf{Règles à la baisse} : pas de crédit pour un simple partage de vocabulaire ; plafond si le périmètre cible est plus étroit ; pour les obligations \emph{relationnelles} (« intégrer X dans Y », « coordonner », « séparer »), faire l'activité de base ne suffit pas — il faut la relation.
+  \item \textbf{Exemples calibrés} et \textbf{format de sortie} (JSON).
+\end{enumerate}
+
+\begin{keybox}{Pourquoi forcer une décomposition explicite}
+Le modèle se trompe quand il compare des \emph{thèmes} (« les deux parlent de sauvegarde ») au lieu d'\emph{obligations} (« séparer les sauvegardes systèmes des sauvegardes de données »). Lui faire d'abord énoncer l'action-clé et l'objet-clé l'oblige à raisonner sur le bon niveau de détail, sans dépendre d'une donnée pré-calculée fragile.
+\end{keybox}
+
+\section{Réévaluation sur faible confiance}
+Si l'IA se dit peu sûre d'elle (confiance sous un seuil), la paire est réévaluée une seconde fois.
+
+\begin{keybox}{Le défaut le plus coûteux : la « confiance verbale » (juillet 2026)}
+Les modèles puissants renvoient parfois \code{"confidence": "medium"} (une valeur en \emph{mots}) au lieu d'un nombre. Le code tentait de convertir « medium » en nombre, ce qui provoquait une erreur\ldots et faisait \emph{jeter tout le jugement de l'IA} au profit d'un calcul de secours basé sur les seuls scores de recherche (sans lecture du texte) --- résultat ensuite \emph{mémorisé en cache}. Conséquence : 207 des 217 décisions en cache étaient des calculs de secours ; le modèle premium n'était presque jamais réellement consulté. Comble de l'ironie : le meilleur modèle « paraissait » moins bon, car il utilise plus souvent l'échelle en mots et échouait donc davantage. Le correctif accepte désormais les nombres, les chaînes et l'échelle verbale (medium~$\rightarrow$~0,6, high~$\rightarrow$~0,85\ldots).
+\end{keybox}
+
+%==============================================================================
+\chapter{Étape 3b --- Correction automatique (garde-fous)}
+
+Autour du juge, une cascade de \emph{règles codées} (déterministes, sans IA) corrige les biais connus. Elle s'applique aussi aux décisions relues du cache.
+
+\begin{figure}[h]
+\begin{fitpic}
+\begin{tikzpicture}[node distance=0.5cm and 0.7cm]
+\node[io] (in) {Décision IA};
+\node[dec,right=of in] (gap) {cible\\retenue ?};
+\node[stg,below=0.7cm of gap,text width=3.3cm] (rescue) {\stage{Repêchage}\\re-crédite une cible forte si l'IA a dit « écart »};
+\node[dec,right=1.1cm of gap] (gate) {alignement\\action/objet\\faible ?};
+\node[stg,below=0.7cm of gate,text width=3.0cm] (cap) {\stage{Plafonnement}\\baisse la couverture};
+\node[dec,right=1.1cm of gate] (floor) {score\\très élevé ?};
+\node[stg,below=0.7cm of floor,text width=2.9cm] (up) {\stage{Remontée}\\si preuve forte};
+\node[io,right=1.0cm of floor] (out) {Décision\\corrigée};
+\draw[fl] (in)--(gap); \draw[fl] (gap)--node[above,font=\scriptsize]{non}(rescue);
+\draw[fl] (gap)--node[above,font=\scriptsize]{oui}(gate); \draw[fl] (gate)--(cap); \draw[fl] (gate)--(floor);
+\draw[fl] (floor)--(up); \draw[fl] (floor)--(out);
+\end{tikzpicture}
+\end{fitpic}
+\caption{Cascade de correction : repêchage (anti faux-écart), plafonnement (anti sur-crédit), remontée (calibrage fin).}
+\end{figure}
+
+\section{Plafonnement action/objet}
+Si le verbe et l'objet de la meilleure cible collent mal à ceux de la source, la couverture est \emph{plafonnée} (mais pas rejetée). On préfère « rabaisser » que « supprimer », pour ne pas perdre une correspondance partielle réelle.
+
+\section{Repêchage de candidat}
+\label{sec:rescue}
+Quand l'IA conclut « écart » mais qu'une cible a des scores de recherche forts, on la re-crédite comme couverture partielle/indirecte, en la marquant « à revoir » plutôt que de perdre sa trace. Deux garde-fous encadrent ce repêchage :
+\begin{itemize}[nosep]
+  \item si l'IA a explicitement conclu que le domaine fonctionnel est \emph{différent}, on ne repêche pas (on respecte le vrai écart) ;
+  \item si l'alignement action/objet est faible, on ne repêche pas : une forte proximité d'empreinte avec un mauvais alignement action/objet, c'est de la proximité \emph{thématique}, pas \emph{fonctionnelle}.
+\end{itemize}
+
+\begin{motiv}
+\textbf{Évolution du plafond de repêchage} : historiquement, un repêchage « partiel » pouvait attribuer \textbf{80}. Or un repêchage repose sur les seuls scores de recherche, \emph{contre} un juge qui a dit « écart » : il ne doit jamais produire « largement couvert ». Chaque repêchage à 80 observé contredisait l'analyse du juge. Le plafond a donc été ramené à \textbf{40/50}.
+\end{motiv}
+
+\section{Remontée sur preuve forte}
+À l'inverse, si le juge a sous-noté alors que les scores de recherche sont très élevés et qu'aucun écart matériel n'est identifié, une règle remonte la couverture.
+
+\begin{motiv}
+\textbf{Suppression d'un ancien plancher (mesurée)} : ces remontées automatiques dataient de l'époque où le juge était un petit modèle peu fiable. Une fois le juge \code{gpt-5.4} fonctionnel, laisser un score de recherche \emph{écraser à la hausse} une note basse \emph{délibérée} du juge devient contre-productif. Désactiver ce plancher a fait passer le taux d'accord exact de 12\,\% à \textbf{25\,\%} sur le jeu de test.
+\end{motiv}
+
+\section{Cohérence du cache}
+Les résultats de correction étant « cuits » dans la décision mémorisée, les paramètres de repêchage et de plancher sont inclus dans la clé de cache : les modifier réinvalide automatiquement les entrées concernées, forçant un nouveau calcul propre.
+
+%==============================================================================
+\chapter{Étape 4 --- La relecture (second juge IA)}
+
+Module \code{final_judge.py}. Une seconde IA relit les décisions par lots de 25, groupées par catégorie, \emph{sans} le détail des candidats (pour garder le texte court). Elle applique un cadre en quatre temps (obligation-clé, même domaine ?, équivalence, notation décisive) et ne renvoie que les \emph{corrections}, appliquées ensuite aux décisions.
+
+\begin{keybox}{Un modèle plus fort pour la relecture}
+Le volume de la relecture est faible (lots de 25, uniquement les cas non triviaux), mais sa tâche --- distinguer des domaines fonctionnels --- est exactement ce qui bloque les modèles faibles. On peut donc y placer un modèle premium (\code{gpt-5.4}) tout en gardant le juge principal sur un modèle moins cher. La relecture agit \emph{après} le repêchage et peut corriger ses éventuelles fuites.
+\end{keybox}
+
+La relecture est parallélisée : les appels IA tournent en simultané, mais l'application des corrections (qui modifie une liste partagée) reste séquentielle pour éviter les conflits.
+
+%==============================================================================
+\chapter{Étape 5 --- Agrégation et synthèse d'écart}
+
+\section{Regroupement au niveau des exigences}
+Les décisions portent sur les \emph{obligations unitaires}. Il faut les regrouper pour donner \emph{une} couverture par exigence. La formule combine la moyenne et le maximum des couvertures atomiques, avec deux garde-fous.
+
+\begin{keybox}{La formule d'agrégation, en clair}
+On part de : \code{couverture = 0,6 × moyenne + 0,4 × maximum}, \emph{mais seulement si} au moins deux obligations sont fortement couvertes (sinon on prend la moyenne simple). Puis un garde-fou « maillon faible » : si la majorité des obligations sont réellement non couvertes, on plafonne la note de l'exigence.
+\end{keybox}
+
+\begin{motiv}
+\textbf{Motivation} : une moyenne pure sous-évaluait une exigence dont l'obligation-clé est bien couverte mais noyée dans des obligations secondaires. À l'inverse, la formule \code{moyenne+max} initiale laissait \emph{une seule} obligation facile gonfler toute l'exigence. La condition « au moins deux obligations fortes » plus le garde-fou « maillon faible » corrigent les deux travers.
+\end{motiv}
+
+\section{Rédaction de l'analyse d'écart}
+Module \code{parent_gap_synthesis.py}. Une IA rédige, pour chaque exigence non pleinement couverte, une analyse d'écart concise mais complète, regroupée par dimension (acteur, action, objet, périmètre, condition, preuve\ldots). Résultats mis en cache.
+
+%==============================================================================
+\chapter{Étape 6 --- Sortie, consolidation, plan d'action}
+
+\section{Le classeur Excel}
+Module \code{output_writer.py}. Le fichier comprend : une notice, un tableau de bord (indicateurs, répartition des couvertures), la feuille principale par exigence (dans les deux sens si mode bidirectionnel), une vue par catégorie, et les feuilles de \emph{détail} donnant la traçabilité complète (chaque obligation, sa cible, son score, le diagnostic de recherche). Les couvertures sont colorées par palier.
+
+\section{Le plan d'action}
+Module \code{action_plan.py}. Pour chaque exigence à écart matériel, une IA transforme le texte d'écart en 1 à 4 actions concrètes et impératives (« que faire pour combler le manque »).
+
+\section{Le référentiel consolidé}
+Modules \code{consolidated_framework.py} et \code{consolidated_output_writer.py}. En deux passes : (1) chaque exigence de A est \emph{enrichie} par ce que B apporte de plus ; (2) les exigences \emph{propres à B} (celles que A ne couvre pas assez) sont ajoutées comme nouvelles. Sortie : un référentiel unifié avec traçabilité vers les sources (origine A-enrichi / B-seul / B-supplément).
+
+\begin{keybox}{Audit de complétude (sur un run réel)}
+216/216 exigences source présentes, 151/152 familles cibles référencées, aucun texte vide, 100\,\% catégorisées, traçabilité complète. \emph{Point faible identifié} : la déduplication de la seconde passe est insuffisante --- 103 obligations cibles sont à la fois intégrées dans des exigences enrichies \emph{et} réintroduites séparément. Le consolidé est donc un \emph{sur-ensemble fiable} plutôt qu'un référentiel parfaitement épuré (cf. feuille de route).
+\end{keybox}
+
+%==============================================================================
+\part{Référence des paramètres}
+
+\chapter{Référence complète des paramètres}
+\label{ch:params}
+
+Les tables ci-dessous recensent les 145+ paramètres de configuration, groupés par thème, avec leur valeur par défaut et leur rôle. La colonne « Défaut » est la valeur codée ; la configuration recommandée peut différer (écarts notables signalés).
+
+\section{Modèles d'IA et exécution}
+{\footnotesize
+\begin{longtable}{@{}p{6.2cm} p{2.0cm} p{6.9cm}@{}}
+\toprule \textbf{Paramètre} & \textbf{Défaut} & \textbf{Rôle}\\ \midrule\endhead
+\code{AZURE_OPENAI_API_KEY} & --- & Clé d'accès à l'IA (fournie à l'exécution).\\
+\code{AZURE_OPENAI_ENDPOINT} & --- & Adresse de la ressource Azure.\\
+\code{AZURE_OPENAI_TEXT_DEPLOYMENT} & gpt-5.4-nano & Modèle des tâches mécaniques (découpage, champs).\\
+\code{AZURE_OPENAI_JUDGE_DEPLOYMENT} & =TEXT & Modèle du juge principal \emph{et} des synthèses.\\
+\code{AZURE_OPENAI_FINAL_JUDGE_DEPLOYMENT} & (vide) & Modèle de la relecture ; vide $\rightarrow$ réutilise le juge.\\
+\code{AZURE_OPENAI_CATEGORY_DEPLOYMENT} & =TEXT & Modèle de catégorisation.\\
+\code{AZURE_OPENAI_EMBEDDING_DEPLOYMENT} & text-embedding-3-small & Modèle des empreintes (recommandé : \code{-large}).\\
+\code{AZURE_OPENAI_TEMPERATURE} & 0.1 & « Créativité » de l'IA (0 recommandé, pour la reproductibilité).\\
+\code{AZURE_OPENAI_EMBEDDING_DIMENSIONS} & 512 & Taille des empreintes.\\
+\code{AZURE_OPENAI_TIMEOUT_SECONDS} & 300 & Délai d'attente d'une réponse. \textbf{Critique} : 60s cassait les modèles forts.\\
+\code{DRY_RUN_WITHOUT_LLM} & false & Mode sans IA (pour tests).\\
+\code{MAX_CONCURRENT_LLM_CALLS} & 4 & Nombre d'appels IA simultanés (limité par le quota).\\
+\bottomrule
+\caption{Modèles et exécution.}
+\end{longtable}
+}
+
+\section{Référentiels d'entrée}
+{\footnotesize
+\begin{longtable}{@{}p{6.2cm} p{2.0cm} p{6.9cm}@{}}
+\toprule \textbf{Paramètre} & \textbf{Défaut} & \textbf{Rôle}\\ \midrule\endhead
+\code{FRAMEWORK_A_FILE} / \code{_B_FILE} & data/\ldots & Chemin du fichier Excel source/cible.\\
+\code{A_ID_COLUMN} \ldots \code{A_CATEGORY_COLUMN} & ID/Title/\ldots & Noms de colonnes (adaptables par référentiel).\\
+\code{A_ESSENTIAL_COLUMN} / \code{A_IMPORTANT_COLUMN} & Essential/Important & Drapeaux NIS2 (entités essentielles/importantes).\\
+\code{MAX_REQUIREMENTS_PER_FRAMEWORK} & 0 & Plafond d'exigences (0 = illimité ; utile pour tests partiels bon marché).\\
+\bottomrule
+\caption{Référentiels (paramètres identiques pour A et B).}
+\end{longtable}
+}
+
+\section{Recherche des candidats et poids}
+{\footnotesize
+\begin{longtable}{@{}p{6.2cm} p{2.0cm} p{6.9cm}@{}}
+\toprule \textbf{Paramètre} & \textbf{Défaut} & \textbf{Rôle}\\ \midrule\endhead
+\code{MATCH_SCOPE} & soft_enisa & Mode de périmètre (souple recommandé : la catégorie n'est qu'un bonus).\\
+\code{TOP_K_CANDIDATES} & 8 & Taille du réservoir de scoring (recommandé 20).\\
+\code{LLM_TOP_K_CANDIDATES} & 10 & Nombre de candidats soumis au juge (recommandé 20).\\
+\code{RRF_K} & 60 & Constante de la fusion de classements.\\
+\code{WEIGHT_SEMANTIC} & 0.45 & Poids de la proximité d'empreinte (recommandé 0.35).\\
+\code{WEIGHT_STRUCTURED} & 0.30 & Poids du recouvrement des champs.\\
+\code{WEIGHT_ACTION_OBJECT} & 0.20 & Poids de l'alignement action/objet (recommandé 0.30).\\
+\code{WEIGHT_CATEGORY_PRIOR} & 0.03 & Bonus de catégorie commune (jamais un filtre).\\
+\code{MIN_CANDIDATE_COMBINED_SCORE} & 0.04 & Score minimal pour retenir un candidat.\\
+\code{AFFINITY_INJECTION_ENABLED} & true & Injection d'affinité (défaut recommandé : false).\\
+\code{AFFINITY_INJECTION_COUNT} & 4 & Nombre max de candidats ajoutés par affinité.\\
+\code{FAMILY_AFFINITY_FILE} & (vide) & Table d'affinité personnalisable (JSON).\\
+\bottomrule
+\caption{Recherche, poids et injection d'affinité.}
+\end{longtable}
+}
+
+\section{Correction automatique (plafonnement, repêchage, planchers)}
+{\footnotesize
+\begin{longtable}{@{}p{7.6cm} p{1.7cm} p{5.8cm}@{}}
+\toprule \textbf{Paramètre} & \textbf{Défaut} & \textbf{Rôle}\\ \midrule\endhead
+\code{ENFORCE_OBJECT_ACTION_GATE} & true & Active le plafonnement action/objet.\\
+\code{OBJECT_ACTION_CAP_75_THRESHOLD} & 0.25 & Seuil pour plafonner à 75.\\
+\code{OBJECT_ACTION_CAP_25_THRESHOLD} & 0.10 & Seuil pour plafonner à 25.\\
+\code{ENABLE_CANDIDATE_RESCUE} & true & Active le repêchage.\\
+\code{CANDIDATE_RESCUE_PARTIAL_COMBINED_THRESHOLD} & 0.55 & Seuil (score combiné) du repêchage partiel.\\
+\code{CANDIDATE_RESCUE_PARTIAL_SEMANTIC_THRESHOLD} & 0.60 & Seuil d'empreinte associé.\\
+\code{CANDIDATE_RESCUE_MIN_ACTION_OBJECT_THRESHOLD} & 0.45 & \textbf{Plancher} : pas de repêchage si action/objet faible.\\
+\code{SCORE_FLOOR_ENABLED} & true & Ancien plancher de remontée (recommandé : false).\\
+\code{STRONG_CANDIDATE_UPGRADE_ENABLED} & true & Remontée sur candidat très fort.\\
+\code{NOT_COVERED_COMBINED_THRESHOLD} & 0.50 & Seuil de rétrogradation vers « non couvert ».\\
+\bottomrule
+\caption{Cascade de correction (extrait des 20+ seuils).}
+\end{longtable}
+}
+
+\section{Jugement, relecture, synthèses}
+{\footnotesize
+\begin{longtable}{@{}p{7.2cm} p{1.7cm} p{6.1cm}@{}}
+\toprule \textbf{Paramètre} & \textbf{Défaut} & \textbf{Rôle}\\ \midrule\endhead
+\code{USE_LLM_PAIRWISE_EVALUATION} & true & Active le juge IA (sinon calcul heuristique).\\
+\code{LLM_REPEAT_ON_LOW_CONFIDENCE} & true & Réévalue une paire si l'IA est peu sûre.\\
+\code{LLM_CONFIDENCE_THRESHOLD} & 0.65 & Seuil de réévaluation.\\
+\code{RUN_FINAL_LLM_JUDGE} & true & Active la relecture.\\
+\code{FINAL_JUDGE_ONLY_AMBIGUOUS} & true & Ne relit que les cas incertains (recommandé : false).\\
+\code{FINAL_JUDGE_BATCH_SIZE} & 25 & Décisions par lot de relecture.\\
+\code{FINAL_JUDGE_MAX_CONCURRENT_CALLS} & 0 & Parallélisme dédié (0 = réutilise le global).\\
+\code{ENABLE_PARENT_GAP_LLM_SYNTHESIS} & false & Analyse d'écart par exigence (recommandé : true).\\
+\code{ENABLE_ACTION_PLAN} & false & Colonne plan d'action (recommandé : true).\\
+\code{ACTION_PLAN_MAX_BULLETS} & 4 & Nombre max d'actions par exigence.\\
+\bottomrule
+\caption{Jugement et synthèses.}
+\end{longtable}
+}
+
+\section{Cache, sortie, consolidation}
+{\footnotesize
+\begin{longtable}{@{}p{6.4cm} p{2.0cm} p{6.6cm}@{}}
+\toprule \textbf{Paramètre} & \textbf{Défaut} & \textbf{Rôle}\\ \midrule\endhead
+\code{REBUILD_CACHE} & false & Force le recalcul complet.\\
+\code{CACHE_KEY_MODE} & file_name & Clé de cache basée sur le nom de fichier.\\
+\code{BIDIRECTIONAL_MAPPING} & true & Active l'analyse dans le sens B$\rightarrow$A.\\
+\code{OUTPUT_LANGUAGE} & fr & Langue des textes générés.\\
+\code{INCLUDE_ATOMIC_DETAIL_SHEETS} & true & Ajoute les feuilles de traçabilité.\\
+\code{RUN_CONSOLIDATED_FRAMEWORK} & false & Génère le référentiel consolidé.\\
+\code{CONSOLIDATED_ORPHAN_THRESHOLD} & 40 & Seuil pour ajouter une exigence « propre à B ».\\
+\code{USE_GUIDELINE_RAG} & false & Enrichissement par guides officiels (désactivé).\\
+\bottomrule
+\caption{Cache, sortie et consolidation (extrait).}
+\end{longtable}
+}
+
+\chapter{Architecture de cache}
+Le cache est essentiel pour maîtriser les coûts : sans lui, chaque run repaierait tout. Trois niveaux :
+\begin{enumerate}[nosep]
+  \item \textbf{Préparation} : découpage, champs, empreintes, enregistrés par référentiel. La clé est le \emph{nom de fichier} --- renommer un fichier réinvalide donc son cache (et force un nouveau découpage).
+  \item \textbf{Décisions du juge} : la clé inclut l'obligation source, \emph{tous} les candidats et leurs scores, le \emph{texte du prompt}, le modèle, la langue, les poids et les seuils de correction. Toute modification pertinente réinvalide automatiquement.
+  \item \textbf{Synthèses} : analyses d'écart et plans d'action.
+\end{enumerate}
+\begin{keybox}{Ne jamais mémoriser un calcul de secours}
+Un correctif interdit désormais de mettre en cache une décision de \emph{secours} (produite quand l'IA a échoué) : auparavant, un jugement dégradé (délai, erreur) se figeait pour tous les runs suivants.
+\end{keybox}
+
+%==============================================================================
+\part{Coûts et performance}
+
+\chapter{Modèle de coût}
+
+\section{Comment le coût est calculé}
+Module \code{cost.py}. Un compteur additionne, pour chaque modèle, le nombre d'appels et de \emph{jetons} (\emph{tokens} --- les unités de texte facturées par l'IA) en entrée et en sortie. Une table de prix convertit en dollars. Le récapitulatif s'affiche en fin de run.
+\begin{keybox}{Exactitude}
+Les \emph{quantités de jetons} sont exactes (fournies par l'IA). La conversion en dollars dépend des prix : les valeurs par défaut sont \emph{indicatives}. Renseigner les tarifs Azure réels (via un paramètre dédié) pour un chiffrage au centime.
+\end{keybox}
+
+\section{Prix indicatifs (USD par million de jetons)}
+\begin{center}\begin{tabular}{@{}lrr@{}}
+\toprule \textbf{Modèle} & \textbf{Entrée} & \textbf{Sortie}\\ \midrule
+\code{gpt-5.4-nano} & 0.10 & 0.40\\
+\code{gpt-5.4-mini} & 0.25 & 2.00\\
+\code{gpt-5.4} & 1.25 & 10.00\\
+\code{text-embedding-3-large} & 0.13 & ---\\
+\bottomrule
+\end{tabular}\end{center}
+Repères : \code{mini} est exactement 5$\times$ moins cher que \code{gpt-5.4} ; \code{nano} $\sim$13$\times$ sur des textes longs comme ceux du juge.
+
+\section{Runs réellement mesurés}
+\begin{center}\begin{tabular}{@{}p{6.4cm}rrr@{}}
+\toprule \textbf{Run} & \textbf{Obligations} & \textbf{Durée} & \textbf{Coût}\\ \midrule
+Test partiel, tout \code{gpt-5.4} & 74 & $\sim$5\,min & 2,82~\$\\
+Test partiel, juge \code{mini} + relecture \code{gpt-5.4} & 74 & $\sim$4\,min & 0,62~\$\\
+\textbf{Complet, bidirectionnel + consolidé} & $\sim$940 & \textbf{60\,min} & \textbf{10,61~\$}\\
+\bottomrule
+\end{tabular}\end{center}
+
+Décomposition du run complet par modèle :
+\begin{center}\begin{tabular}{@{}lrrr@{}}
+\toprule \textbf{Modèle} & \textbf{Appels} & \textbf{Jetons} & \textbf{Coût}\\ \midrule
+\code{gpt-5.4} (relecture, 2 sens) & 69 & 0,97M & 4,34~\$\\
+\code{gpt-5.4-mini} (juge + synthèses + consolidation) & 1810 & 17,3M & 5,96~\$\\
+\code{gpt-5.4-nano} (préparation) & 1378 & 2,45M & 0,30~\$\\
+\code{text-embedding-3-large} (empreintes) & 13 & 0,05M & 0,01~\$\\
+\midrule \textbf{Total} & 3270 & 20,7M & \textbf{10,61~\$}\\
+\bottomrule
+\end{tabular}\end{center}
+
+\begin{figure}[h]
+\begin{fitpic}
+\begin{tikzpicture}
+\begin{axis}[ybar,bar width=20pt,width=12cm,height=5cm,ymin=0,
+  ylabel={USD},symbolic x coords={nano,mini,gpt-5.4,empreintes},xtick=data,
+  nodes near coords,every node near coord/.append style={font=\footnotesize},
+  enlarge x limits=0.22,axis lines=left]
+\addplot[fill=royal] coordinates {(nano,0.30) (mini,5.96) (gpt-5.4,4.34) (empreintes,0.01)};
+\end{axis}
+\end{tikzpicture}
+\end{fitpic}
+\caption{Répartition du coût du run complet. Le juge (\code{mini}) et la relecture (\code{gpt-5.4}) dominent ; la préparation est marginale.}
+\end{figure}
+
+\section{Choisir le modèle du juge : le bon compromis}
+Mesure clé : sur le jeu de test, mettre \code{mini} au juge \textbf{égale la qualité} de \code{gpt-5.4} (mêmes taux d'accord) pour \textbf{4,5$\times$ moins cher}. La configuration optimale est donc : \code{nano} (préparation), \code{mini} (juge), \code{gpt-5.4} (relecture). Dès que le juge passe en \code{mini}, c'est la relecture \code{gpt-5.4} qui devient le poste de coût principal (un « plancher »).
+
+\section{Coût du mode bidirectionnel}
+Analyser aussi le sens B$\rightarrow$A ajoute environ 0,6$\times$ le coût (B a moins d'obligations que A, et la préparation est partagée, non doublée) : multiplicateur $\sim$1,5--1,6$\times$, et non 2$\times$.
+
+\chapter{Parallélisation}
+Cinq étapes exécutent leurs appels IA en parallèle : le juge, la relecture, la synthèse d'écart, le plan d'action, ainsi que le découpage et l'extraction de champs.
+\begin{keybox}{Coût inchangé, temps divisé}
+La parallélisation \emph{ne change pas} le nombre d'appels IA : mêmes jetons, donc même coût. Elle divise le temps d'attente. Le compteur de coût étant conçu pour le parallélisme, le chiffrage reste exact.
+\end{keybox}
+\textbf{Attention au quota} : les modèles forts ont des limites de débit plus serrées. Un parallélisme trop agressif (15) a provoqué des rejets en cascade et des calculs de secours silencieux ; d'où la valeur prudente de 4, et un avertissement affiché en fin d'étape si des secours surviennent.
+
+%==============================================================================
+\part{Évaluation et évolution}
+
+\chapter{Comment on mesure la qualité}
+
+\section{Le harnais d'évaluation}
+Script \code{evaluate_mapping.py} : compare la feuille de l'agent au mapping d'un consultant de référence et calcule l'accord exact (même palier), l'accord à un palier près, la direction du biais (sur- ou sous-notation) et l'erreur moyenne. Il tolère les deux façons de nommer les mêmes contrôles (le consultant écrit \code{ISSP} là où l'export dit \code{PSSI}, \code{SUPERVISION} vs \code{MONITORING}\ldots) grâce à une table d'équivalence.
+
+\section{Une grille de lecture plus fine}
+Au-delà du score, une grille croise l'\emph{écart de note} et la \emph{concordance des cibles retenues} :
+\begin{center}\begin{tabular}{@{}p{7.0cm}rr@{}}
+\toprule \textbf{Classe} & \textbf{n} & \textbf{\%}\\ \midrule
+Bien mappé (note à un palier près \emph{et} mêmes cibles) & 132 & 62\,\%\\
+Débattable (écart de deux paliers, ou cibles différentes) & 61 & 29\,\%\\
+Grosse erreur (verdicts opposés) & 19 & 9\,\%\\
+\bottomrule
+\end{tabular}\end{center}
+
+\section{Résultats sur le gold complet (212 exigences)}
+Accord \textbf{22\,\% exact}, \textbf{68\,\% à un palier près}, biais équilibré, erreur moyenne $-$4,6 points. Détail par fonction NIS2 :
+\begin{center}\begin{tabular}{@{}lrrrl@{}}
+\toprule \textbf{Fonction} & \textbf{n} & \textbf{Exact} & \textbf{À 1 palier} & \textbf{Biais}\\ \midrule
+Détection (DE) & 21 & 19\,\% & 81\,\% & sur-notation\\
+Gouvernance (GV) & 40 & 18\,\% & 68\,\% & sous-notation\\
+Identification (ID) & 53 & 21\,\% & 68\,\% & équilibré\\
+Protection (PR) & 76 & 26\,\% & 68\,\% & équilibré\\
+Reprise (RC) & 8 & 12\,\% & 62\,\% & (petit effectif)\\
+Réponse (RS) & 14 & 21\,\% & 57\,\% & équilibré\\
+\bottomrule
+\end{tabular}\end{center}
+
+\begin{keybox}{Comment interpréter le « 22\,\% exact »}
+Ce n'est pas « 78\,\% de fautes ». 68\,\% des cas sont à un palier près, et beaucoup relèvent d'une divergence de \emph{granularité} : l'agent nuance (25/50/75) là où le consultant tranche en tout-ou-rien (0/100). Le \textbf{68\,\% à un palier près} est la métrique honnête. Fait rassurant : aucune fonction ne s'effondre --- l'agent \emph{généralise} à des fonctions sur lesquelles il n'a jamais été réglé.
+\end{keybox}
+
+\section{Où viennent les désaccords}
+En comparant les \emph{familles de contrôles} citées de part et d'autre : \textbf{47\,\%} de même contrôle exact, \textbf{71\,\%} d'accord au niveau de la famille. Les vrais désaccords de cible se répartissent en trois causes : (a) \emph{agrégation} --- la bonne cible est bien trouvée sur une obligation mais disparaît de la ligne d'exigence ; (b) \emph{recherche} --- la cible n'a jamais été retrouvée ; (c) \emph{juge} --- retrouvée mais écartée.
+
+\chapter{Évolution de l'agent : journal et motivations}
+
+Cette itération a transformé un agent \emph{en apparence} peu fiable en un agent dont les erreurs sont comprises et bornées.
+
+\begin{figure}[h]
+\begin{fitpic}
+\begin{tikzpicture}[every node/.style={font=\footnotesize}]
+\foreach \y/\t in {0/{Prompt de relecture restructuré (cadre en 4 temps)},
+ 1/{Décomposition d'obligation obligatoire + règles de vrai écart},
+ 2/{Plafond de repêchage ramené de 80 à 40/50},
+ 3/{Règle des obligations relationnelles},
+ 4/{Suppression de l'ancien plancher (mesuré : +13 points)},
+ 5/{\textbf{Coercition de la confiance --- le correctif racine}},
+ 6/{Délai porté à 300s + parallélisme réduit à 4},
+ 7/{Module de comptage de coût},
+ 8/{Parallélisation (relecture, découpage, champs)},
+ 9/{Injection d'affinité (mesurée, désactivée par défaut)},
+ 10/{Harnais d'évaluation + gold consultant (212 exigences)}}{
+  \node[royal] at (0.15,-\y*0.6) {\textbullet};
+  \node[anchor=west] at (0.4,-\y*0.6) {\t};
+}
+\draw[royal,thick] (0.15,0.25) -- (0.15,-6.5);
+\end{tikzpicture}
+\end{fitpic}
+\caption{Frise des évolutions (juillet 2026).}
+\end{figure}
+
+\section{Les correctifs d'infrastructure (les plus impactants)}
+\begin{motiv}
+\textbf{1. Confiance en mots} : \code{"medium"} au lieu de 0,6 provoquait une erreur $\rightarrow$ calcul de secours \emph{mémorisé}. 207/217 décisions en cache étaient des secours. Le modèle premium n'était presque jamais consulté ; pire, il « paraissait » moins bon car il échouait plus souvent. Correctif : conversion tolérante.
+\end{motiv}
+\begin{motiv}
+\textbf{2. Échecs silencieux} : l'erreur était avalée sans trace, et la relecture réécrivait les justifications, masquant le symptôme. Désormais : l'erreur réelle est journalisée, un avertissement s'affiche, et les secours ne sont jamais mémorisés.
+\end{motiv}
+\begin{motiv}
+\textbf{3. Réglages dépendant du modèle} : délai 60s et parallélisme 15 étaient calibrés pour le petit modèle ; le modèle fort exige 300s et parallélisme 4 (quota).
+\end{motiv}
+
+\section{Les évolutions de qualité de jugement}
+\begin{motiv}
+\textbf{Décomposition d'obligation} : forcer l'action-clé/objet-clé/condition-clé avant la note, pour juger sur l'élément décisif et non sur le thème.
+\end{motiv}
+\begin{motiv}
+\textbf{Règle relationnelle} : « intégrer X dans Y », « coordonner », « séparer » --- faire l'activité de base ne couvre pas la relation exigée.
+\end{motiv}
+\begin{motiv}
+\textbf{Suppression de l'ancien plancher} : une béquille de l'époque du petit juge, devenue nuisible une fois le grand juge fiable. Gain mesuré : +13 points d'accord exact.
+\end{motiv}
+
+\section{Une leçon d'ingénierie}
+\begin{keybox}{Vérifier le diagnostic avant d'accuser la recherche}
+Un « manque de rappel » supposé était en réalité une divergence de \emph{philosophie} : les bonnes cibles étaient déjà trouvées et bien notées, mais le juge les classait « support indirect ». Toujours inspecter le détail des candidats avant de conclure à un problème de recherche.
+\end{keybox}
+
+%==============================================================================
+\part{Déploiement}
+
+\chapter{Application web et déploiement}
+
+\section{Le serveur (backend)}
+Construit avec FastAPI. Il expose des routes pour : lister les référentiels du catalogue, lancer une analyse et suivre son avancement, télécharger le résultat (Excel ou PDF), prévisualiser un classeur, et enregistrer les identifiants d'accès à l'IA. Les analyses longues tournent en tâche de fond avec suivi de progression.
+
+\section{Le catalogue de référentiels}
+Module \code{webapp/core/catalog.py}. Cinq référentiels intégrés : Belgium CyFun~2025, France ReCyF~2.5, Netherlands CBw~NIS2, Italy FNSC~2025, Greece~Ref.~1689. Chaque entrée déclare ses correspondances de colonnes (ex. les Pays-Bas utilisent une colonne \code{Code} au lieu de \code{ID}). L'utilisateur peut aussi importer son propre référentiel.
+
+\section{L'interface (frontend)}
+Une application React à page unique. Elle récupère la liste des référentiels \emph{en direct} auprès du serveur : ajouter un référentiel ne nécessite donc qu'un redémarrage du serveur, pas une reconstruction de l'interface.
+
+\section{Docker / Render}
+L'application est empaquetée en une image Docker (construction de l'interface, puis exécution Python) et déployée sur Render. Deux points de vigilance résolus :
+\begin{itemize}[nosep]
+  \item l'image embarque un modèle de configuration \emph{sans} identifiants ; ceux-ci sont saisis dans l'interface à l'usage ;
+  \item le stockage de Render est \emph{éphémère} (remis à zéro à chaque déploiement) : les fichiers de résultats pré-générés sont donc embarqués dans l'image pour rester visibles dans l'application.
+\end{itemize}
+
+%==============================================================================
+\part{Limites et feuille de route}
+
+\chapter{Limites connues}
+\begin{itemize}
+  \item \textbf{Agrégation des cibles} : la ligne d'exigence ne liste que les cibles des obligations les mieux couvertes ; des cibles correctes trouvées sur d'autres obligations disparaissent de l'affichage.
+  \item \textbf{Effet « politique de sécurité »} : le juge choisit parfois la politique générale (un fourre-tout de gouvernance) au lieu du contrôle spécifique du même domaine.
+  \item \textbf{Rappel des familles « contrats » et « cartographie »} : sous-représentées dans les 20 candidats.
+  \item \textbf{Granularité contre binaire} : divergence structurelle avec un consultant qui tranche en tout-ou-rien.
+  \item \textbf{Consolidé non épuré} : sur-ensemble fiable mais avec des redites.
+  \item \textbf{Versions de référentiel} : le gold cite des familles absentes de l'export --- il faut aligner les versions.
+  \item \textbf{Gold unique} : l'évaluation repose sur un seul consultant ; un désaccord n'est pas toujours une erreur de l'agent.
+\end{itemize}
+
+\chapter{Prochaines évolutions}
+
+Chaque proposition est décrite en langage autonome (sans supposer la connaissance du jargon interne).
+
+\section{Court terme (sûr et mesurable)}
+\begin{enumerate}[nosep]
+  \item \textbf{Corriger l'affichage des cibles} : faire apparaître, sur chaque exigence, \emph{toutes} les familles de contrôles cibles réellement retenues au niveau des obligations, et pas seulement celles des obligations les mieux notées. Gain immédiat, sans coût IA (pur affichage).
+  \item \textbf{Nuancer la « politique de sécurité »} : garder la politique générale comme \emph{justification} de couverture, mais, si un contrôle plus précis du même domaine figure parmi les candidats, le désigner en priorité comme cible.
+  \item \textbf{Réactiver l'injection d'affinité là où elle aide.} \emph{Rappel} : l'injection d'affinité consiste à \emph{ajouter} à la vingtaine de candidats trouvés par les empreintes quelques cibles supplémentaires appartenant aux familles de contrôles naturellement liées au thème de l'exigence (ex. pour une exigence « chaîne d'approvisionnement », ajouter des cibles des familles « contrats » et « écosystème »). Comme cet ajout ne retire jamais de candidat, il ne peut pas dégrader le résultat --- au pire il propose une cible inutile que le juge écarte. Elle a été \emph{désactivée par défaut} car, sur le jeu de test « gouvernance », les bonnes cibles étaient déjà trouvées (le problème y était la notation, pas la recherche). \textbf{Action} : la \emph{réactiver} et mesurer son effet, via le harnais, sur les référentiels où de vraies cibles échappent réellement à la recherche (familles « contrats » et « cartographie » observées manquantes sur le run complet).
+  \item \textbf{Épurer le référentiel consolidé} : ne pas réintroduire séparément une obligation cible déjà fusionnée dans une exigence enrichie (supprimer les redites).
+\end{enumerate}
+
+\section{Moyen terme}
+\begin{enumerate}[nosep]
+  \item \textbf{Banc de régression permanent} : réunir plusieurs mappings de consultant en un jeu de référence unique, évalué automatiquement après chaque run pour détecter toute régression.
+  \item \textbf{Reclassement des candidats} : ajouter une étape où une IA légère \emph{reclasse} les 40 meilleurs candidats pour n'en garder que 20, afin de faire remonter les familles mal placées par les empreintes (peu coûteux).
+  \item \textbf{Calibration par thème} : encoder dans les instructions du juge les tendances observées (le consultant est généreux sur la gouvernance, strict sur la technique), déduites du jeu de référence.
+  \item \textbf{File de revue humaine} : exporter dans une feuille dédiée les décisions marquées « à revoir » et les repêchages, pour validation par un expert.
+\end{enumerate}
+
+\section{Long terme}
+\begin{enumerate}[nosep]
+  \item \textbf{Enrichissement par guides officiels} : la mécanique existe déjà (désactivée) ; nourrir le juge des guides d'application (CCB belge, ANSSI\ldots) serait un levier de précision inexploité.
+  \item \textbf{Double jugement sur désaccord} : re-juger avec un second modèle les paires que la relecture a fortement corrigées --- un désaccord entre modèles signale un cas limite à faire relire par un humain.
+  \item \textbf{Préciser le sens de l'écart de périmètre} : indiquer explicitement si la cible est plus \emph{large} ou plus \emph{étroite} que la source.
+  \item \textbf{Persistance sur Render} : attacher un disque permanent pour conserver les résultats et le cache d'un déploiement à l'autre (et éviter de re-payer la préparation).
+\end{enumerate}
+
+%==============================================================================
+\appendix
+\chapter{Annexe --- Les prompts principaux}
+\label{app:prompts}
+Les prompts (instructions données à l'IA) sont stockés dans la configuration. Résumé de leur intention :
+\begin{description}[leftmargin=1.4cm,style=nextline]
+\item[\code{PROMPT_ATOMIZE}] Découpe une exigence en obligations unitaires (un acteur, une action, un objet, une obligation vérifiable).
+\item[\code{PROMPT_EXTRACT_FIELDS}] Extrait le formulaire structuré (domaine, acteur, action, objet, condition, délai, preuve, type de contrôle, mots-clés).
+\item[\code{PROMPT_CATEGORY_HARMONIZATION}] Range une exigence dans la taxonomie ENISA (catégorie principale + secondaires + confiance).
+\item[\code{PROMPT_PAIRWISE_MATCH}] Le juge de couverture : décomposition obligatoire, qualification de relation, priorité, règles à la hausse et à la baisse, exemples calibrés, format de sortie. ($\sim$17\,400 caractères.)
+\item[\code{PROMPT_FINAL_JUDGE}] La relecture : cadre décisif en quatre temps, corrections seulement.
+\item[\code{PROMPT_PARENT_GAP_SYNTHESIS}] L'analyse d'écart par exigence, regroupée par dimension, sans jargon technique.
+\item[\code{PROMPT_ACTION_PLAN}] 1 à 4 actions de remédiation impératives par exigence à écart matériel.
+\item[\code{PROMPT_CONSOLIDATED_BATCH} / \code{_SUPPLEMENT}] Fusion (A enrichi par B) et ajout des exigences propres à B.
+\end{description}
+
+\chapter{Annexe --- Glossaire}
+\begin{description}[leftmargin=3.0cm,style=nextline]
+\item[Atome / obligation atomique] Obligation unitaire issue du découpage d'une exigence.
+\item[Bidirectionnel] Analyse dans les deux sens (A vers B et B vers A).
+\item[Bucket / palier] Palier d'affichage de la couverture : 0/25/50/75/100.
+\item[Embedding / empreinte] Représentation numérique d'un texte qui capture son sens.
+\item[Gold standard] Mapping de référence d'un consultant, servant de vérité terrain.
+\item[Harnais] Programme qui mesure automatiquement l'accord agent/consultant.
+\item[Injection d'affinité] Ajout de candidats « du bon rayon thématique » à la recherche, en union.
+\item[LLM / juge] Grand modèle de langage qui décide de la couverture d'une paire.
+\item[Rappel (recall)] Capacité de la recherche à ne pas rater la bonne cible.
+\item[Repêchage (rescue)] Re-crédit d'une cible forte quand le juge a conclu à un écart.
+\item[RRF] Fusion de classements par rang réciproque (robuste aux échelles différentes).
+\item[soft\_enisa] Mode où la catégorie est un bonus, jamais un filtre.
+\item[Token / jeton] Unité de texte facturée par l'IA.
+\item[Vrai écart (true gap)] Aucune cible ne couvre réellement l'obligation (domaine différent).
+\end{description}
+
+\vfill
+\begin{center}\small\textcolor{navy}{\rule{0.5\linewidth}{0.4pt}}\\[4pt]
+Fin du rapport --- Compliance Assistant\end{center}
+
+\end{document}

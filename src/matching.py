@@ -692,7 +692,11 @@ def gap_decision(direction: str, source: AtomicRequirement, reason: str, candida
     )
 
 
-def sanitize_decision(decision: MappingDecision, app_cfg: AppConfig | None = None) -> MappingDecision:
+def sanitize_decision(decision: MappingDecision, app_cfg: AppConfig | None = None, *, skip_object_action_cap: bool = False) -> MappingDecision:
+    """Normalize a decision. skip_object_action_cap=True is used for final-judge
+    corrections: the deterministic object/action score cap must not silently
+    override the stronger final-judge model's deliberate coverage correction
+    (same anti-pattern as the removed score floor / rescue-at-80)."""
     try:
         cov = int(decision.coverage_level)
     except Exception:
@@ -728,7 +732,7 @@ def sanitize_decision(decision: MappingDecision, app_cfg: AppConfig | None = Non
 
     # Post-LLM object/action gate: use it as a score cap, not as a hard rejection.
     max_selected_ao = _max_selected_score(decision, "action_object_score")
-    max_allowed = _object_action_max_coverage(app_cfg, max_selected_ao) if app_cfg else 100
+    max_allowed = 100 if skip_object_action_cap else (_object_action_max_coverage(app_cfg, max_selected_ao) if app_cfg else 100)
     if decision.coverage_level > max_allowed:
         decision.coverage_level = max_allowed
         decision.equivalence_level = _equivalence_from_coverage(max_allowed, decision.relation_type)

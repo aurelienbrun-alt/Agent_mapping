@@ -11,7 +11,14 @@ from .models import AtomicRequirement, CandidateScore, MappingDecision
 from .utils import stable_hash
 
 
-CACHE_SCHEMA_VERSION = "mapping_decision_cache_v4_target_validated_relation_taxonomy"
+# v5: category TEXT (primary/secondary) removed from the key payload. Categories
+# are (re)assigned at run time by the ENISA harmonizer + repair step, and their
+# persisted form does not exactly match the first run's in-memory form — so
+# keying on the text invalidated the ENTIRE cache between the first run of a new
+# framework file and every later run (observed 2026-07-15: 2x 1465 misses).
+# Their only matching effect, the category prior, stays in the key through the
+# rounded candidate scores.
+CACHE_SCHEMA_VERSION = "mapping_decision_cache_v5_category_free_key"
 
 
 class MappingDecisionCache:
@@ -85,8 +92,6 @@ def build_mapping_cache_key(
             "parent_requirement": target.parent_requirement,
             "requirement": target.atomic_requirement,
             "fields": target.fields,
-            "primary_category": getattr(target, "primary_category", "") or target.category,
-            "secondary_categories": getattr(target, "secondary_categories", []) or [],
             "scores": {
                 "semantic": round(score.semantic_score, 5),
                 "keyword": round(score.keyword_score, 5),
@@ -106,8 +111,6 @@ def build_mapping_cache_key(
             "parent_requirement": source.parent_requirement,
             "requirement": source.atomic_requirement,
             "fields": source.fields,
-            "primary_category": getattr(source, "primary_category", "") or source.category,
-            "secondary_categories": getattr(source, "secondary_categories", []) or [],
         },
         "candidates": candidates,
         "judge_model": app_cfg.azure_openai_judge_deployment,

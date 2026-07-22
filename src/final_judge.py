@@ -63,16 +63,46 @@ def _apply_correction(source_id: str, corr: dict, decisions: list[MappingDecisio
             target.target_parent_ids = parent_ids
             target.target_parent_requirements = parent_reqs
 
-    sanitize_decision(target, app_cfg)
+    # The final judge is the last arbiter: its corrected coverage must not be
+    # silently re-capped by the deterministic object/action score gate (same
+    # anti-pattern as the removed score floor / rescue-at-80).
+    sanitize_decision(target, app_cfg, skip_object_action_cap=True)
+
+
+# Top retrieval candidates shown to the final judge so it can re-select a more
+# specific target (selected_candidate_ids corrections are validated against the
+# full candidate list, so the judge may only pick ids it was actually shown).
+FINAL_JUDGE_CANDIDATES_SHOWN = 10
+_CANDIDATE_TEXT_MAX_CHARS = 240
+
+
+def _compact_candidates(d: MappingDecision) -> list[dict]:
+    cands = [c for c in (d.candidates or []) if isinstance(c, dict)]
+    def _combined(c: dict) -> float:
+        scores = c.get("scores") if isinstance(c.get("scores"), dict) else {}
+        try:
+            return float(scores.get("combined", c.get("combined_score", 0)) or 0)
+        except Exception:
+            return 0.0
+    cands = sorted(cands, key=_combined, reverse=True)[:FINAL_JUDGE_CANDIDATES_SHOWN]
+    out = []
+    for c in cands:
+        out.append({
+            "candidate_id": c.get("candidate_id"),
+            "parent_id": c.get("parent_id"),
+            "requirement": str(c.get("requirement") or "")[:_CANDIDATE_TEXT_MAX_CHARS],
+        })
+    return out
 
 
 def _judge_payload(d: MappingDecision) -> dict:
-    """Payload minimal pour le final judge.
+    """Payload pour le final judge.
 
-    On retire `candidates` (qui contient tous les champs + scores de chaque
-    candidat) car il fait exploser la taille du prompt sans aider le juge a
-    corriger les faux positifs/negatifs. Le juge raisonne sur la decision, pas
-    sur la re-notation de chaque candidat.
+    `retrieval_candidates` expose une version compacte (id + parent + extrait)
+    des meilleurs candidats retrouves, pour que le juge final puisse corriger la
+    SELECTION (choisir un controle plus specifique) et pas seulement le score.
+    Le payload complet des candidats (scores, champs structures) reste exclu
+    pour contenir la taille du prompt.
     """
     return {
         "source_id": d.source_id,
@@ -80,6 +110,7 @@ def _judge_payload(d: MappingDecision) -> dict:
         "source_category": d.source_category,
         "target_ids": d.target_ids,
         "target_requirements": d.target_requirements,
+        "retrieval_candidates": _compact_candidates(d),
         "relation_type": d.relation_type,
         "equivalence_level": d.equivalence_level,
         "coverage_level": d.coverage_level,
@@ -136,8 +167,11 @@ def run_final_judge(decisions: list[MappingDecision], app_cfg: AppConfig, llm: A
         except Exception as exc:  # surfaced on the main thread below
             return category, batch_no, [], "", exc
 
+    failed_batches: list[str] = []
+
     def _handle(category: str, batch_no: int, batch_len: int, corrections: list, summary: str, exc: Exception | None) -> None:
         if exc is not None:
+            failed_batches.append(f"{type(exc).__name__}: {str(exc)[:200]}")
             logger.error("final_judge.category_batch", exc, category=category, batch=batch_no, items=batch_len)
             return
         for corr in corrections:
@@ -164,5 +198,16 @@ def run_final_judge(decisions: list[MappingDecision], app_cfg: AppConfig, llm: A
     for d in decisions:
         if d.source_id in notes_by_source:
             d.final_judge_notes = notes_by_source[d.source_id]
+    # A failing final judge must never look like a successful run: surface it
+    # loudly (same lesson as the silent pairwise fallbacks).
+    if failed_batches:
+        from collections import Counter
+        error_counts = Counter(msg.split(":")[0] for msg in failed_batches)
+        print(
+            f"[WARNING] {len(failed_batches)}/{len(review_batches)} final-judge batch(es) FAILED - "
+            f"their items received NO final-judge review: {dict(error_counts)} - e.g. {failed_batches[0]}",
+            flush=True,
+        )
+        logger.event("final_judge.batch_failures", failed=len(failed_batches), total=len(review_batches), first_error=failed_batches[0])
     logger.event("final_judge.done", corrections=len(notes_by_source))
     return decisions

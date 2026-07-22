@@ -56,6 +56,13 @@ def _framework_metadata(framework_cfg: FrameworkConfig, app_cfg: AppConfig) -> d
             "pivot_language": app_cfg.pivot_language,
             "use_llm": bool(app_cfg.use_llm_keyword_normalization),
         },
+        # The English pivot rewrites the requirement text BEFORE atomization, so a
+        # cache built without it holds source-language atoms/fields/embeddings and
+        # must never be reused once translation is enabled (or its prompt changes).
+        "translation": {
+            "enabled": bool(getattr(app_cfg, "translate_requirements_to_english", False)),
+            "prompt": stable_hash(getattr(app_cfg, "prompt_translate_requirement", "")),
+        },
     }
 
 
@@ -155,6 +162,8 @@ def _cache_is_compatible(framework_cfg: FrameworkConfig, app_cfg: AppConfig, fil
     ]
     # Prompt hashes are allowed to be absent in old caches only if the user has disabled strict validation.
     checks.append(("prompt_hashes", expected.get("prompt_hashes"), meta.get("prompt_hashes")))
+    # A pre-translation cache holds source-language text end to end: never reuse it.
+    checks.append(("translation", expected.get("translation"), meta.get("translation")))
     for name, expected_value, actual_value in checks:
         if expected_value != actual_value:
             return False, f"metadata_mismatch:{name}"
