@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pandas as pd
 
 from .config import FrameworkConfig, AppConfig
 from .models import RequirementRow
 from .utils import normalize_text, normalize_category
+
+if TYPE_CHECKING:
+    from .logging_utils import JsonlRunLogger
 
 
 def _configured_columns(cfg: FrameworkConfig) -> dict[str, str]:
@@ -44,12 +49,79 @@ def _cell_bool(row, column_name: str, default: bool) -> bool:
     return default
 
 
-def read_framework_excel(cfg: FrameworkConfig, app_cfg: AppConfig) -> list[RequirementRow]:
+def _warn_if_id_column_numeric(cfg: FrameworkConfig, id_column: str) -> None:
+    """Detect a control-ID column Excel stored as NUMBERS rather than text.
+
+    A cell containing "5.10" typed into a General-formatted column is silently
+    stored as the float 5.1 and collides with a real "5.1" control — the trailing
+    zero is unrecoverable from the value alone (found on the ISO 27001 catalog:
+    5.10/5.20/5.30/7.10/8.10/8.20/8.30 all collided with 5.1/5.2/5.3/7.1/8.1/8.2/8.3,
+    corrupting 7 of 93 controls). `dtype=str` below only stringifies whatever
+    pandas already parsed, so it cannot recover a value already destroyed upstream.
+    """
+    if not id_column:
+        return
+    # Inspect the RAW Excel cell types with openpyxl, not pandas' inferred dtype.
+    # `pd.read_excel` without dtype=str re-coerces a numeric-looking *text* column
+    # (e.g. a correctly-fixed "5.10"/"5.1" column) back to float64 and re-truncates
+    # it, which would fire this warning on a file that is actually fine. Only a cell
+    # Excel stored as a NUMBER (data_type == 'n') can lose a trailing zero.
+    try:
+        from openpyxl import load_workbook
+
+        wb = load_workbook(cfg.file, read_only=True, data_only=True)
+        ws = wb[cfg.sheet_name] if cfg.sheet_name else wb.worksheets[0]
+        rows_iter = ws.iter_rows()
+        header = [normalize_text(c.value) for c in next(rows_iter)]
+        if id_column not in header:
+            wb.close()
+            return
+        ci = header.index(id_column)
+        seen: set[str] = set()
+        dupes_set: set[str] = set()
+        numeric_present = False
+        for row in rows_iter:
+            if ci >= len(row):
+                continue
+            cell = row[ci]
+            if cell.value is None:
+                continue
+            if cell.data_type == "n":  # stored as a number, not text
+                numeric_present = True
+            key = str(cell.value).strip()
+            if key in seen:
+                dupes_set.add(key)
+            seen.add(key)
+        wb.close()
+    except Exception:
+        return  # the real read below will raise a clearer error if the file is bad
+    # Only warn on an ACTUAL collision produced by numeric storage — not merely
+    # because the column happens to be numeric-typed (plain "3.1" clause numbers
+    # are numeric and never collide), and not for a correctly text-typed column.
+    dupes = sorted(dupes_set)
+    if dupes and numeric_present:
+        print(
+            f"[WARNING] {cfg.file.name}: ID column '{id_column}' is stored as NUMBERS in Excel, "
+            f"and {len(dupes)} value(s) repeat after stringifying ({', '.join(dupes[:5])}"
+            f"{'...' if len(dupes) > 5 else ''}). A repeat here likely means a trailing-zero ID "
+            "(e.g. 5.10) collided with a shorter one (5.1) and the difference is unrecoverable. "
+            "Fix: format that column as Text in Excel (or prefix values with an apostrophe, "
+            "'5.10) before re-running.",
+            flush=True,
+        )
+
+
+def read_framework_excel(
+    cfg: FrameworkConfig,
+    app_cfg: AppConfig,
+    logger: "JsonlRunLogger | None" = None,
+) -> list[RequirementRow]:
     if not cfg.file.exists():
         raise FileNotFoundError(f"Excel file not found: {cfg.file}")
 
-    df = pd.read_excel(cfg.file, sheet_name=cfg.sheet_name or 0, dtype=str)
     columns = _configured_columns(cfg)
+    _warn_if_id_column_numeric(cfg, columns["id"])
+    df = pd.read_excel(cfg.file, sheet_name=cfg.sheet_name or 0, dtype=str)
 
     # The requirement column is the only truly mandatory field.
     # ID, title, category and subcategory may be left empty in .env.
@@ -88,12 +160,21 @@ def read_framework_excel(cfg: FrameworkConfig, app_cfg: AppConfig) -> list[Requi
 
     rows: list[RequirementRow] = []
     seen_ids: set[str] = set()
+    duplicate_ids: list[str] = []
     for idx, row in df.iterrows():
         requirement = _cell(row, columns["requirement"])
         source_id = _cell(row, columns["id"]) or f"row_{idx + 2}"
         if not requirement:
             continue
         if source_id in seen_ids:
+            # A control framework must not carry two controls under the same ID.
+            # The usual cause is an ID column stored as *numbers*: a control ending
+            # in a zero (5.30, 8.20, ...) is held as the float 5.3 / 8.2, collapses
+            # onto the real 5.3 / 8.2, and is silently renamed here to
+            # "<id>__row_N" — which corrupts every mapping that should have reached
+            # the lost control. Record it so we can warn instead of shipping a
+            # wrong workbook. Fix the source with tools/fix_iso_catalog_ids.py.
+            duplicate_ids.append(source_id)
             source_id = f"{source_id}__row_{idx + 2}"
         seen_ids.add(source_id)
 
@@ -122,4 +203,28 @@ def read_framework_excel(cfg: FrameworkConfig, app_cfg: AppConfig) -> list[Requi
                 important=important,
             )
         )
+
+    if duplicate_ids:
+        offenders = sorted(set(duplicate_ids))
+        message = (
+            f"{cfg.file.name}: {len(offenders)} duplicate source ID(s) after read: {offenders}. "
+            "A likely cause is IDs stored as numbers (controls ending in 0 such as 5.30/8.20 "
+            "collapse onto 5.3/8.2). Store the ID column as text, e.g. run "
+            "tools/fix_iso_catalog_ids.py. The duplicates were kept under '<id>__row_N' but the "
+            "output IDs will be ambiguous."
+        )
+        if logger is not None:
+            logger.event(
+                "framework.read.duplicate_ids",
+                status="warning",
+                framework=cfg.name,
+                file=str(cfg.file),
+                duplicates=offenders,
+                hint=message,
+            )
+        else:  # keep the signal even when called outside the pipeline (tools, tests)
+            import warnings
+
+            warnings.warn(message, stacklevel=2)
+
     return rows

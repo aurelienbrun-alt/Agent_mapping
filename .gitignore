@@ -26,3 +26,5 @@ reports/*.md
 # output/*.xlsx are committed on purpose so the workbooks appear in the app on Render
 docs/cache/*
 !docs/cache/.gitkeep
+# safety backups written by tools/fix_iso_catalog_ids.py
+*.bak

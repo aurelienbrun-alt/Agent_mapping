@@ -100,7 +100,7 @@ def process_framework(framework_cfg: FrameworkConfig, app_cfg: AppConfig, llm: A
         return cached
 
     logger.event("framework.read.start", framework=framework_cfg.name, file=str(framework_cfg.file))
-    rows = read_framework_excel(framework_cfg, app_cfg)
+    rows = read_framework_excel(framework_cfg, app_cfg, logger)
     logger.event("framework.read.done", framework=framework_cfg.name, requirements=len(rows))
 
     # English pivot FIRST: everything downstream (categories, atomization, fields,
