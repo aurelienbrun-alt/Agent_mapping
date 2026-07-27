@@ -18,6 +18,14 @@ def _apply_correction(source_id: str, corr: dict, decisions: list[MappingDecisio
     if target is None:
         return
 
+    # Snapshot the pairwise coverage before the final judge overwrites it, so the
+    # magnitude of any overturn can be used as a reliability signal downstream.
+    if getattr(target, "pre_final_judge_coverage", None) is None:
+        try:
+            target.pre_final_judge_coverage = int(target.coverage_level)
+        except Exception:
+            target.pre_final_judge_coverage = None
+
     for field in ["relation_type", "equivalence_level", "match_type", "gap_type", "justification", "gap", "combine_controls", "recommendation", "mapping_risk", "scoring_rationale"]:
         value = corr.get(field) or corr.get(f"corrected_{field}")
         if value not in (None, ""):

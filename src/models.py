@@ -118,3 +118,7 @@ class MappingDecision:
     # False = genuinely different domain (definitive true gap): candidate rescue must
     # not override it using retrieval similarity. None = not assessed (rescue as before).
     same_functional_domain: bool | None = None
+    # Coverage as decided by the pairwise judge, BEFORE the final judge overwrote it.
+    # None when the final judge did not touch this decision. A large |final - pre|
+    # overturn is a reliability signal (see output_writer._review_priority).
+    pre_final_judge_coverage: int | None = None

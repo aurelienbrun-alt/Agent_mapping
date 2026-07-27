@@ -212,6 +212,221 @@ def _bucket_fill(value) -> PatternFill | None:
     return PatternFill("solid", fgColor=color) if color else None
 
 
+# ---------------------------------------------------------------------------
+# Reliability-driven review priority (C1) and neighbouring requirements (C2).
+#
+# The "Review priority" column keeps its existing High/Medium/Low/None taxonomy
+# but is now derived from how RELIABLE the agent's mapping is, not from coverage
+# magnitude. Low reliability => High priority => the consultant must review it;
+# a fully reliable, exactly-covered row => None.
+#
+# Uncertainty "points" accumulate per signal (more points => less reliable).
+# combined_score lives in [0,1] and is empirically COMPRESSED (on real runs the
+# top candidates cluster around 0.5-0.7 and the top1/top2 gap is a few thousandths),
+# so the margin/contest signals are kept tight and low-weight; the discriminative
+# signals - object/action gate on the SELECTED target, a large final-judge overturn,
+# disagreement between atomic decisions, high mapping risk - carry most of the weight.
+#
+# v1 THRESHOLDS ARE HEURISTIC AND MEANT TO BE CALIBRATED against the consultant
+# gold standard (evaluate_mapping.py + Comparaison_*.xlsx): tune so that reviewing
+# only the High/Medium rows recovers the large majority of consultant disagreements.
+# ---------------------------------------------------------------------------
+REL_BUCKET_EDGES = (12.5, 37.5, 62.5, 87.5)
+REL_MARGIN_TIE = 0.003        # top vs best different-parent candidate: near-identical
+REL_CONTEST_BAND = 0.01       # a different-parent candidate this close is "contesting"
+REL_BOUNDARY_BAND = 4.0       # raw coverage this close to a bucket edge is fragile
+REL_DISPERSION_STRONG = 50    # max-min atom coverage under one parent
+REL_DISPERSION_MILD = 30
+REL_JUDGE_DELTA_BIG = 40      # final judge overturned the pairwise coverage a lot
+REL_JUDGE_DELTA_MED = 20
+
+_REL_PTS = {
+    "margin_tie": 0.5, "contested": 0.5, "boundary": 0.5,
+    "gate_selected": 1.5, "dispersion_strong": 1.0, "dispersion_mild": 0.5,
+    "judge_big": 2.0, "judge_med": 1.0, "risk_high": 1.5, "gap_with_candidates": 0.5,
+}
+REL_HIGH_PTS = 3.0
+REL_MEDIUM_PTS = 1.5
+
+
+def _cand_combined(c: dict) -> float:
+    try:
+        return float(c.get("combined_score") or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _cand_parent(c: dict) -> str:
+    return _clean_display_id(str(c.get("parent_id") or _parent_id(str(c.get("candidate_id") or ""))))
+
+
+def _selected_gate_capped(d: MappingDecision) -> bool:
+    """True when a SELECTED target candidate was capped by the object/action gate."""
+    selected = set(d.selected_candidate_ids or d.target_ids or [])
+    if not selected:
+        return False
+    for c in (d.candidates or []):
+        if isinstance(c, dict) and c.get("candidate_id") in selected:
+            if str(c.get("hard_gate") or "pass") not in ("", "pass"):
+                return True
+    return False
+
+
+def _cross_parent_signals(d: MappingDecision) -> tuple[float | None, int]:
+    """(margin from the top candidate to the best DIFFERENT-parent candidate,
+    number of distinct other-parent controls within REL_CONTEST_BAND of the top).
+
+    Sibling atoms of the same target control (tiny margin, same parent) are
+    ignored - they roll up to the same target, so they are not real ambiguity."""
+    cands = sorted(
+        [c for c in (d.candidates or []) if isinstance(c, dict)],
+        key=_cand_combined, reverse=True,
+    )
+    if not cands:
+        return None, 0
+    top_parent = _cand_parent(cands[0])
+    top_score = _cand_combined(cands[0])
+    margin: float | None = None
+    contesting: set[str] = set()
+    for c in cands[1:]:
+        p = _cand_parent(c)
+        if p == top_parent:
+            continue
+        gap = top_score - _cand_combined(c)
+        if margin is None:
+            margin = gap
+        if gap <= REL_CONTEST_BAND:
+            contesting.add(p)
+    return margin, len(contesting)
+
+
+def _review_priority(coverage: float, items: list[MappingDecision]) -> str:
+    """Reliability-driven review priority (keeps the High/Medium/Low/None taxonomy).
+
+    Replaces the old coverage-magnitude priority: low reliability => High (must be
+    reviewed manually), => Medium (verify), => Low (quick confirmation), None only
+    for a fully reliable and exactly-covered row. See the REL_* constants above.
+    """
+    if not items:
+        return "High"
+    pts = 0.0
+    covs = [float(getattr(d, "coverage_level", 0) or 0) for d in items]
+
+    # --- selection ambiguity between competing target controls (light) ---
+    margins: list[float] = []
+    max_contest = 0
+    for d in items:
+        if not d.target_ids:
+            continue
+        m, contest = _cross_parent_signals(d)
+        if m is not None:
+            margins.append(m)
+        max_contest = max(max_contest, contest)
+    if margins and min(margins) < REL_MARGIN_TIE:
+        pts += _REL_PTS["margin_tie"]
+    if max_contest >= 2:
+        pts += _REL_PTS["contested"]
+
+    # --- object/action gate capped the SELECTED target ---
+    if any(_selected_gate_capped(d) for d in items):
+        pts += _REL_PTS["gate_selected"]
+
+    # --- final judge overturned the pairwise coverage ---
+    deltas = [
+        abs(float(d.coverage_level) - float(d.pre_final_judge_coverage))
+        for d in items
+        if getattr(d, "pre_final_judge_coverage", None) is not None
+    ]
+    if deltas:
+        md = max(deltas)
+        if md >= REL_JUDGE_DELTA_BIG:
+            pts += _REL_PTS["judge_big"]
+        elif md >= REL_JUDGE_DELTA_MED:
+            pts += _REL_PTS["judge_med"]
+
+    # --- atomic decisions under one parent disagree ---
+    if len(covs) >= 2:
+        rng = max(covs) - min(covs)
+        if rng >= REL_DISPERSION_STRONG:
+            pts += _REL_PTS["dispersion_strong"]
+        elif rng >= REL_DISPERSION_MILD:
+            pts += _REL_PTS["dispersion_mild"]
+
+    # --- explicit high mapping risk from the judges ---
+    if any(str(getattr(d, "mapping_risk", "") or "").lower() == "high" for d in items):
+        pts += _REL_PTS["risk_high"]
+
+    # --- "not covered" despite retrieved candidates and no confident different-domain
+    #     verdict: a possible retrieval/judge miss, worth a glance (a judge-confirmed
+    #     different-domain gap is reliable and is NOT flagged here) ---
+    if float(coverage) <= 0 and any(d.candidates for d in items) and not any(
+        getattr(d, "same_functional_domain", None) is False for d in items
+    ):
+        pts += _REL_PTS["gap_with_candidates"]
+
+    # --- bucket-boundary fragility of the displayed coverage ---
+    if min(abs(float(coverage) - e) for e in REL_BUCKET_EDGES) <= REL_BOUNDARY_BAND:
+        pts += _REL_PTS["boundary"]
+
+    if pts >= REL_HIGH_PTS:
+        return "High"
+    if pts >= REL_MEDIUM_PTS:
+        return "Medium"
+    if pts > 0:
+        return "Low"
+    return "None" if float(coverage) >= 99.5 else "Low"
+
+
+def _neighbour_reason(gate_capped: bool, output_language: str) -> str:
+    fr = str(output_language or "").lower().startswith("fr")
+    if gate_capped:
+        return "alignement action/objet faible" if fr else "weak action/object alignment"
+    return "score inférieur, non retenu" if fr else "lower score, not selected"
+
+
+def _build_parent_neighbours(
+    items: list[MappingDecision],
+    selected_parent_ids: list[str],
+    output_language: str = "en",
+    max_neighbours: int = 3,
+    excerpt_chars: int = 110,
+) -> str:
+    """C2 - list the top retrieved target controls that were NOT selected, so the
+    consultant can judge borderline selections without opening the atomic sheet.
+
+    One line per distinct target control (best atom score wins); controls already
+    in the selected target list are excluded. The candidate text is already stored
+    on every decision (build_candidates_payload), so this costs nothing extra."""
+    selected = {_clean_display_id(x) for x in (selected_parent_ids or [])}
+    best: dict[str, dict[str, Any]] = {}
+    for d in items:
+        for c in (d.candidates or []):
+            if not isinstance(c, dict):
+                continue
+            pid = _cand_parent(c)
+            if not pid or pid in selected:
+                continue
+            score = _cand_combined(c)
+            prev = best.get(pid)
+            if prev is None or score > prev["score"]:
+                best[pid] = {
+                    "score": score,
+                    "text": str(c.get("parent_requirement") or c.get("requirement") or ""),
+                    "gate": str(c.get("hard_gate") or "pass") not in ("", "pass"),
+                }
+    if not best:
+        return ""
+    ranked = sorted(best.items(), key=lambda kv: kv[1]["score"], reverse=True)[:max_neighbours]
+    lines: list[str] = []
+    for pid, info in ranked:
+        excerpt = re.sub(r"\s+", " ", str(info["text"])).strip()
+        if len(excerpt) > excerpt_chars:
+            excerpt = excerpt[:excerpt_chars].rstrip() + "…"
+        reason = _neighbour_reason(info["gate"], output_language)
+        lines.append(f"• {pid} · sim {round(info['score'] * 100)}% — {excerpt} [{reason}]")
+    return "\n".join(lines)
+
+
 def _entity_criticality_note(false_targets: list[tuple[str, str]], coverage: int, output_language: str) -> str:
     """Build the 'important entities not covered' gap bullet.
 
@@ -364,7 +579,8 @@ def _write_readme(wb, app_cfg: AppConfig, run_id: str) -> None:
         ["Object/action gate", "The gate is a score cap, not a hard rejection. Weak action/object alignment can cap coverage, but the target candidate is kept for traceability when it is relevant."],
         ["Gap column", "The parent Gap column is synthesized by a parent-level LLM judge when enabled. It lists residual gaps by actor, action, object, scope, condition, deadline, evidence, governance and explicitness."],
         ["Keyword matching", "Keyword/BM25 matching and LLM keyword normalization are disabled by default in v3.6. Matching relies on embeddings, structured fields, action/object similarity and category prior."],
-        ["Review priority", "High means material missing coverage or low action/object alignment. Medium means partial coverage requiring audit review. Low means mostly covered but not exact."],
+        ["Review priority (reliability)", "Reflects how RELIABLE the agent's mapping is, NOT how much is covered - it is independent from the Coverage level. High = low reliability, review this row manually; Medium = verify; Low = quick confirmation; None = reliable and exactly covered. Derived from quantitative signals: margin between competing target controls, object/action gate on the selected target, final-judge overturn of the pairwise score, disagreement between atomic decisions, bucket-boundary proximity and mapping risk. Thresholds are a first version, to be calibrated on the consultant gold standard."],
+        ["Neighbouring requirements considered", "Top retrieved target controls that were NOT selected, each with a similarity score and the reason it was not retained, so a reviewer can judge borderline selections directly, without opening the atomic evidence sheet."],
         ["Recommended models", "Cost-efficient run: gpt-4.1-nano for atomization/fields/category and text-embedding-3-small for embeddings. Better final judge: gpt-4.1-mini or gpt-5.4-nano if available in your Azure region and budget. Highest assurance: gpt-5.4 or stronger reasoning model for final judge only."],
     ]
     _write_table(ws, 4, 1, rows, table_style=False)
@@ -542,6 +758,7 @@ def _parent_headers(app_cfg: AppConfig | None = None) -> list[str]:
     headers = base[:-1]
     if app_cfg and getattr(app_cfg, "enable_action_plan", False):
         headers.append("Action plan")
+    headers.append("Neighbouring requirements considered")
     headers.append(base[-1])
     if app_cfg and getattr(app_cfg, "enable_entity_criticality", False):
         headers += ["Essential", "Important"]
@@ -726,7 +943,10 @@ def _build_parent_rows(
         gap_type = _parent_gap_type(items, coverage)
         match_type = "None" if not target_parent_ids else "Composite" if len(target_parent_ids) > 1 or len(items) > 1 else items[0].match_type
         gap = _llm_parent_gap_summary(items) or _parent_gap_summary(items, target_name)
-        priority = _priority(coverage, items)
+        # Review priority now reflects reliability, not coverage magnitude (C1).
+        priority = _review_priority(coverage, items)
+        # Neighbouring target controls that were retrieved but NOT selected (C2).
+        neighbours = _build_parent_neighbours(items, target_parent_ids, output_language)
         risk = _risk(coverage, items)
 
         source_essential = True
@@ -766,6 +986,7 @@ def _build_parent_rows(
             "coverage_level": coverage,
             "match_type": match_type,
             "gap": gap,
+            "neighbours": neighbours,
             "review_priority": priority,
             "mapping_risk": risk,
             "source_essential": source_essential,
@@ -1160,16 +1381,6 @@ def _coverage_synthesis_sentence(relationship: str, coverage: float, target_name
 
 
 
-def _priority(coverage: float, items: list[MappingDecision]) -> str:
-    if coverage <= 25 or any(d.equivalence_level == "Gap" for d in items):
-        return "High"
-    if coverage < 75 or any((d.mapping_risk or "").lower() == "high" for d in items):
-        return "Medium"
-    if coverage < 100:
-        return "Low"
-    return "None"
-
-
 def _risk(coverage: float, items: list[MappingDecision]) -> str:
     risks = {str(d.mapping_risk or "").lower() for d in items}
     if "high" in risks or coverage <= 25:
@@ -1223,6 +1434,7 @@ def _parent_row_values(r: dict[str, Any], app_cfg: AppConfig | None = None) -> l
     ]
     if app_cfg and getattr(app_cfg, "enable_action_plan", False):
         values.append(r.get("action_plan", ""))
+    values.append(r.get("neighbours", ""))
     values.append(r["review_priority"])
     if app_cfg and getattr(app_cfg, "enable_entity_criticality", False):
         values.append("True" if r.get("source_essential", True) else "False")
@@ -1296,6 +1508,7 @@ _PARENT_COL_WIDTHS = {
     "Gap": 55,
     "Detailed gap": 60,
     "Action plan": 55,
+    "Neighbouring requirements considered": 68,
     "Review priority": 18,
     "Essential": 12,
     "Important": 12,
